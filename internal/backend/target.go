@@ -13,7 +13,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/Suhaibinator/SuhaibServer/config"
+	"github.com/Suhaibinator/SuhaibServer/internal/config"
 	"golang.org/x/net/http2"
 )
 

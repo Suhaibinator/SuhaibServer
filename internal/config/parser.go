@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -78,27 +79,28 @@ type MTLSPolicy struct {
 	Queries []string `yaml:"queries" json:"queries"`
 }
 
+// Duration, SniSnifferConfig, MTLSPolicy types unchanged...
+// (omitting for brevity)
+
 type BackendConfig struct {
-	// The SNI hostname this config applies to.
 	Hostname string `yaml:"hostname" json:"hostname"`
 
 	// If false, no mTLS is used at all (TLS only).
 	// If true, we consult MTLSPolicy to decide if a given
 	// path/query enforces mTLS or not.
-	MTLSEnabled bool        `yaml:"mtlsEnabled" json:"mtlsEnabled"`
-	MTLSPolicy  *MTLSPolicy `yaml:"mtlsPolicy"  json:"mtlsPolicy"`
+	MTLSEnabled  bool        `yaml:"mtlsEnabled" json:"mtlsEnabled"`
+	MTLSPolicy   *MTLSPolicy `yaml:"mtlsPolicy"  json:"mtlsPolicy"`
+	TerminateTLS bool        `yaml:"terminateTLS" json:"terminateTLS"`
 
-	TerminateTLS bool   `yaml:"terminateTLS" json:"terminateTLS"`
-	TLSCertFile  string `yaml:"tlsCertFile"  json:"tlsCertFile"`
-	TLSKeyFile   string `yaml:"tlsKeyFile"   json:"tlsKeyFile"`
-	RootCAFile   string `yaml:"rootCAFile"   json:"rootCAFile"`
+	// Note that we now allow just a filename, which we’ll resolve after parsing.
+	TLSCertFile string `yaml:"tlsCertFile"  json:"tlsCertFile"`
+	TLSKeyFile  string `yaml:"tlsKeyFile"   json:"tlsKeyFile"`
+	RootCAFile  string `yaml:"rootCAFile"   json:"rootCAFile"`
 
 	OriginServer string `yaml:"originServer" json:"originServer"`
 	OriginPort   string `yaml:"originPort"   json:"originPort"`
 }
 
-// LoadConfig attempts to parse the given file as YAML first,
-// then JSON if YAML fails.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -108,16 +110,38 @@ func LoadConfig(path string) (*Config, error) {
 	var cfg Config
 
 	// Attempt YAML unmarshal first
-	if yamlErr := yaml.Unmarshal(data, &cfg); yamlErr == nil {
-		// Success with YAML
-		return &cfg, nil
-	} else {
+	yamlErr := yaml.Unmarshal(data, &cfg)
+	if yamlErr != nil {
 		// If YAML fails, we try JSON
-		if jsonErr := json.Unmarshal(data, &cfg); jsonErr == nil {
-			return &cfg, nil
-		} else {
-			// Both failed
-			return nil, fmt.Errorf("could not parse file as YAML or JSON. YAML error: %v; JSON error: %v", yamlErr, jsonErr)
+		jsonErr := json.Unmarshal(data, &cfg)
+		if jsonErr != nil {
+			return nil, fmt.Errorf(
+				"could not parse file as YAML or JSON. YAML error: %v; JSON error: %v",
+				yamlErr, jsonErr,
+			)
+		}
+	}
+
+	// At this point, cfg is loaded from either YAML or JSON.
+	// Let's fix up file paths by prepending /etc/certs if they're not absolute.
+	cfg.resolveCertPaths("/etc/certs")
+
+	return &cfg, nil
+}
+
+// resolveCertPaths updates each BackendConfig so that if the user-provided
+// TLSCertFile, TLSKeyFile, or RootCAFile is not an absolute path,
+// we prepend the given baseDir (e.g. "/etc/certs").
+func (c *Config) resolveCertPaths(baseDir string) {
+	for i, b := range c.Backends {
+		if b.TLSCertFile != "" && !filepath.IsAbs(b.TLSCertFile) {
+			c.Backends[i].TLSCertFile = filepath.Join(baseDir, b.TLSCertFile)
+		}
+		if b.TLSKeyFile != "" && !filepath.IsAbs(b.TLSKeyFile) {
+			c.Backends[i].TLSKeyFile = filepath.Join(baseDir, b.TLSKeyFile)
+		}
+		if b.RootCAFile != "" && !filepath.IsAbs(b.RootCAFile) {
+			c.Backends[i].RootCAFile = filepath.Join(baseDir, b.RootCAFile)
 		}
 	}
 }

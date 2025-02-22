@@ -20,7 +20,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Suhaibinator/SuhaibServer/config"
+	"github.com/Suhaibinator/SuhaibServer/internal/config"
 )
 
 // TestNewBackend covers creation of a Backend using NewBackend.

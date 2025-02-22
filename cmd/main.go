@@ -7,9 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Suhaibinator/SuhaibServer/backend"
-	"github.com/Suhaibinator/SuhaibServer/config" // <-- Import your config package
-	"github.com/Suhaibinator/SuhaibServer/proxy_router"
+	"github.com/Suhaibinator/SuhaibServer/internal/backend"
+	"github.com/Suhaibinator/SuhaibServer/internal/config"
+	"github.com/Suhaibinator/SuhaibServer/internal/proxy_router"
 )
 
 func main() {
