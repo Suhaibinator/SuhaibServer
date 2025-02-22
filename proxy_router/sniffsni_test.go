@@ -67,77 +67,62 @@ func buildTLSRecord(recordType byte, major, minor byte, payload []byte) []byte {
 	return append(header, payload...)
 }
 
-// buildClientHelloPayload constructs a minimal ClientHello handshake message
-// with optional SNI. This includes the 4-byte handshake header (type + length).
 func buildClientHelloPayload(serverName string) []byte {
-	// We'll build the actual ClientHello bytes (excluding the handshake header).
-	// Fields:
-	// - client_version(2) + random(32)
-	// - session_id_length(1) + session_id
-	// - cipher_suites_length(2) + cipher_suites
-	// - compression_methods_length(1) + compression_methods
-	// - extensions_length(2) + extensions (if any)
+	var ch cryptobyte.Builder
 
-	// For SNI extension, we build a single extension of type 0, containing
-	// a single hostname entry.
+	// client_version: 2 bytes (TLS 1.2 = 0x0303)
+	ch.AddUint16(0x0303)
 
-	var hello cryptobyte.Builder
+	// random: 32 bytes
+	ch.AddBytes(make([]byte, 32))
 
-	// client_version(2) + random(32)
-	hello.AddUint16(0x0303)          // example TLS 1.2 version in the ClientHello
-	hello.AddBytes(make([]byte, 32)) // random
+	// session_id: 1-byte length + data
+	ch.AddUint8(0) // no session_id
 
-	// session_id
-	hello.AddUint8(0) // length=0
+	// cipher_suites: 2-byte length + content
+	ch.AddUint16(2)      // length = 2
+	ch.AddUint16(0x002f) // TLS_RSA_WITH_AES_128_CBC_SHA (example)
 
-	// cipher_suites
-	hello.AddUint16(2)      // length = 2
-	hello.AddUint16(0x1301) // example TLS_AES_128_GCM_SHA256
+	// compression_methods: 1-byte length + content
+	ch.AddUint8(1)
+	ch.AddUint8(0) // "null" compression
 
-	// compression_methods
-	hello.AddUint8(1) // length=1
-	hello.AddUint8(0) // "null" compression
-
-	// Build extensions
+	// Build extensions block
 	var exts cryptobyte.Builder
-	if serverName != "" {
-		// SNI extension type = 0
-		var sniExt cryptobyte.Builder
-		sniExt.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-			// server_name_list
-			// single entry: name_type (0), length-prefixed hostname
+	if len(serverName) > 0 {
+		// Extension #0: SNI
+		exts.AddUint16(0) // extType = SNI
+		// Build extension data
+		var sniData cryptobyte.Builder
+		sniData.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
 			b.AddUint8(0) // name_type = host_name
 			b.AddUint16LengthPrefixed(func(b2 *cryptobyte.Builder) {
 				b2.AddBytes([]byte(serverName))
 			})
 		})
+		sniBytes := sniData.BytesOrPanic()
 
-		// Wrap the extension with type=0
-		exts.AddUint16(0) // extension type = SNI
-		exts.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-			b.AddBytes(sniExt.BytesOrPanic())
-		})
+		exts.AddUint16(uint16(len(sniBytes))) // extension data length
+		exts.AddBytes(sniBytes)
 	}
+	extBytes := exts.BytesOrPanic()
 
-	// Add more dummy extensions if needed, or skip if no SNI
-	hello.AddUint16LengthPrefixed(func(b *cryptobyte.Builder) {
-		b.AddBytes(exts.BytesOrPanic())
-	})
+	// 2-byte total extensions length + the extension block
+	ch.AddUint16(uint16(len(extBytes)))
+	ch.AddBytes(extBytes)
 
-	clientHelloData := hello.BytesOrPanic()
-
-	// Now prepend the 4-byte handshake header:
-	// - 1 byte: Handshake Type (1 = ClientHello)
-	// - 3 bytes: Handshake Length
+	// Now convert the entire ClientHello to bytes
+	clientHelloData := ch.BytesOrPanic()
 	totalLen := len(clientHelloData)
-	handshakeHeader := []byte{
-		0x01,
-		byte(totalLen >> 16),
-		byte(totalLen >> 8),
-		byte(totalLen & 0xff),
-	}
 
-	return append(handshakeHeader, clientHelloData...)
+	// Prepend the 4-byte handshake header
+	handshake := make([]byte, 4+totalLen)
+	handshake[0] = 0x01 // HandshakeType = ClientHello
+	handshake[1] = byte(totalLen >> 16)
+	handshake[2] = byte(totalLen >> 8)
+	handshake[3] = byte(totalLen)
+	copy(handshake[4:], clientHelloData)
+	return handshake
 }
 
 // TestSniSniffer_SniffSNI tests the main entrypoint.

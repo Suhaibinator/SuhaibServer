@@ -173,9 +173,7 @@ func parseSNI(handshake []byte) (string, error) {
 	if !s.ReadUint16LengthPrefixed(&cipherSuites) {
 		return "", fmt.Errorf("unable to read cipher_suites length")
 	}
-	if !s.Skip(len(cipherSuites)) {
-		return "", fmt.Errorf("truncated cipher_suites")
-	}
+	// No extra skip needed here!
 
 	// compression_methods (length-prefixed by 1 byte)
 	var compressionLen uint8
