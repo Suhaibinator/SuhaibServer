@@ -10,8 +10,7 @@ services:
         target: /etc/suhaibserver/config.yaml
     volumes:
       - /etc/nginx/ssl/:/etc/certs/:ro
-    deploy:
-      replicas: 1
+    restart: always
 
 configs:
   suhaibserver_config:
