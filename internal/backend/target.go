@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -33,13 +34,16 @@ type Backend struct {
 }
 
 func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
+	// Log the incoming configuration for debugging.
+	log.Printf("[DEBUG] NewBackendFromConfig called with BackendConfig: %+v", bcfg)
+
 	// Build the UseMTLS function according to MTLSEnabled and MTLSPolicy.
 	useMTLS := buildMTLSLogic(bcfg)
 
+	// Create the base Backend struct.
 	b := &Backend{
 		TerminateTLS: bcfg.TerminateTLS,
 		UseMTLS:      useMTLS,
-
 		TLSCertFile:  bcfg.TLSCertFile,
 		TLSKeyFile:   bcfg.TLSKeyFile,
 		RootCAFile:   bcfg.RootCAFile,
@@ -47,20 +51,30 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 		OriginPort:   bcfg.OriginPort,
 	}
 
+	log.Printf("[DEBUG] Created Backend struct: TerminateTLS=%v, TLSCertFile=%q, TLSKeyFile=%q, RootCAFile=%q, OriginServer=%q, OriginPort=%q",
+		b.TerminateTLS, b.TLSCertFile, b.TLSKeyFile, b.RootCAFile, b.OriginServer, b.OriginPort)
+
+	// If we’re terminating TLS, build the inbound TLS config.
 	if b.TerminateTLS {
+		log.Printf("[DEBUG] Building inbound TLS config (mTLS enabled=%v)...", bcfg.MTLSEnabled)
 		tlsCfg, err := b.buildInboundTLSConfig(bcfg.MTLSEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("buildInboundTLSConfig error: %w", err)
 		}
 		b.InboundTLSConfig = tlsCfg
+		log.Printf("[DEBUG] Inbound TLS config successfully built.")
 	}
 
+	// Build the reverse proxy to the origin server.
+	log.Printf("[DEBUG] Building reverse proxy to origin %s:%s...", b.OriginServer, b.OriginPort)
 	rp, err := b.buildReverseProxy()
 	if err != nil {
 		return nil, fmt.Errorf("buildReverseProxy error: %w", err)
 	}
 	b.ReverseProxy = rp
+	log.Printf("[DEBUG] Reverse proxy successfully built.")
 
+	log.Printf("[DEBUG] NewBackendFromConfig finished; returning backend.")
 	return b, nil
 }
 
