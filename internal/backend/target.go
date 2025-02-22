@@ -220,73 +220,65 @@ func tunnelTCP(client net.Conn, backendAddr string) error {
 // TLS-TERMINATION MODE
 // ----------------------------------------------------------------------------
 
-// terminateTLSAndProxyHTTP:
-//  1. Wrap conn in tls.Server(...) with the pre-built inbound TLS config.
-//  2. Optionally request/enforce client cert (for mTLS) - partial or at handshake
-//  3. Use an http.Server to handle requests (single-conn) and reverse-proxy to the origin.
+// terminateTLSAndProxyHTTP terminates TLS and uses a standard HTTP server to handle
+// multiple requests (HTTP/1.1 keep-alive or HTTP/2) over the same single connection.
 func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 	log.Printf("[DEBUG] Entering terminateTLSAndProxyHTTP(conn=%v)", conn.RemoteAddr())
 
 	if b.InboundTLSConfig == nil {
-		err := fmt.Errorf("inboundTLSConfig is nil; cannot terminate TLS")
-		log.Printf("[ERROR] %v", err)
+		return fmt.Errorf("inboundTLSConfig is nil; cannot terminate TLS")
+	}
+
+	// Wrap the raw conn in a TLS server
+	tlsConn := tls.Server(conn, b.InboundTLSConfig)
+
+	// Perform the TLS handshake now (so if there's an error, we see it early)
+	if err := tlsConn.Handshake(); err != nil {
+		log.Printf("[ERROR] TLS handshake failed from %v: %v", conn.RemoteAddr(), err)
+		tlsConn.Close()
 		return err
 	}
 
-	tlsConn := tls.Server(conn, b.InboundTLSConfig)
-	log.Printf("[DEBUG] Created tls.Server wrapper over conn=%v", conn.RemoteAddr())
+	// We’ll serve exactly this one TLS connection with an http.Server
+	oneShotLn := newSingleConnListener(tlsConn)
 
-	// We'll serve exactly one connection with an http.Server
-	oneShotLn := &singleConnListener{
-		conn: tlsConn,
-		done: make(chan struct{}),
-	}
-
+	// Build an http.Server
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			log.Printf("[DEBUG] Handling HTTP request: method=%s, URL=%s, RemoteAddr=%s", r.Method, r.URL, r.RemoteAddr)
-
-			// 1) If we need mTLS for this path/query, check if a cert was presented
+			// If mTLS required for this URL, check client certificate
 			if b.UseMTLS != nil && b.UseMTLS(r.URL) {
-				log.Printf("[DEBUG] mTLS required for this request.")
 				if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-					log.Printf("[WARN] No client certificate found, returning 401.")
+					log.Printf("[WARN] No client cert provided; returning 401.")
 					http.Error(w, "client certificate required", http.StatusUnauthorized)
 					return
 				}
-				log.Printf("[DEBUG] Client cert found; continuing request.")
 			}
-
-			// 2) Possibly pass the real client IP to the origin
+			// Pass real client IP to origin
 			remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 			r.Header.Set("X-Original-Remote-IP", remoteIP)
-			log.Printf("[DEBUG] Set X-Original-Remote-IP=%s", remoteIP)
 
-			// 3) Let the pre-built ReverseProxy handle it
-			log.Printf("[DEBUG] ReverseProxy handling request to origin.")
+			// Let ReverseProxy handle the request
 			b.ReverseProxy.ServeHTTP(w, r)
 		}),
 	}
 
-	// If you want HTTP/2 inbound, set up the h2 server:
+	// If you want to support HTTP/2, set up the h2 server:
 	h2s := &http2.Server{}
 	server.TLSNextProto = map[string]func(*http.Server, *tls.Conn, http.Handler){
 		"h2": func(s *http.Server, tc *tls.Conn, h http.Handler) {
-			log.Printf("[DEBUG] Starting HTTP/2 server for connection from %v", tc.RemoteAddr())
-			h2s.ServeConn(tc, &http2.ServeConnOpts{
-				Handler: s.Handler,
-			})
+			h2s.ServeConn(tc, &http2.ServeConnOpts{Handler: s.Handler})
 		},
 	}
 
-	log.Printf("[DEBUG] Calling server.Serve with singleConnListener...")
+	// Serve will not exit until we return from Accept() with a permanent error or
+	// the connection is closed by the client or forcibly by us.
 	err := server.Serve(oneShotLn)
 	if err != nil && err != http.ErrServerClosed {
 		log.Printf("[ERROR] http server error: %v", err)
 		return fmt.Errorf("http server error: %w", err)
 	}
 
-	log.Printf("[DEBUG] Exiting terminateTLSAndProxyHTTP with no error.")
+	log.Printf("[DEBUG] Exiting terminateTLSAndProxyHTTP (conn=%v) with no fatal error", conn.RemoteAddr())
 	return nil
 }
 
@@ -367,40 +359,67 @@ func loadCertPool(caFile string) (*x509.CertPool, error) {
 	return pool, nil
 }
 
-// singleConnListener is a net.Listener that returns exactly one connection.
-// This is a trick to let http.Server.Serve() handle a single net.Conn.
+// ----------------------------------------------------------------------------
+// SINGLE-CONN LISTENER (FIXED)
+// ----------------------------------------------------------------------------
+
+// singleConnListener is a net.Listener that returns exactly one net.Conn (the TLS-wrapped
+// conn), but does NOT immediately error out on subsequent Accept() calls. Instead, it
+// blocks until the connection is closed, so that http.Server does not fail prematurely.
 type singleConnListener struct {
 	conn net.Conn
-	mu   sync.Mutex
-	done chan struct{}
-	used bool
+
+	mu     sync.Mutex
+	used   bool
+	closed bool
+
+	// doneChan is closed once we close the underlying connection,
+	// which unblocks any subsequent Accept().
+	doneChan chan struct{}
+}
+
+// newSingleConnListener creates a singleConnListener for one net.Conn.
+func newSingleConnListener(c net.Conn) *singleConnListener {
+	return &singleConnListener{
+		conn:     c,
+		doneChan: make(chan struct{}),
+	}
 }
 
 func (s *singleConnListener) Accept() (net.Conn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	log.Printf("[DEBUG] singleConnListener.Accept() called.")
-	if s.used {
-		log.Printf("[DEBUG] singleConnListener: no more connections (already used).")
-		return nil, fmt.Errorf("no more connections")
+
+	if s.closed {
+		return nil, net.ErrClosed
 	}
-	s.used = true
-	log.Printf("[DEBUG] singleConnListener: returning conn %v", s.conn.RemoteAddr())
-	return s.conn, nil
+	if !s.used {
+		// First Accept call returns the net.Conn
+		s.used = true
+		return s.conn, nil
+	}
+
+	// Any subsequent Accept call blocks until conn is closed, then returns net.ErrClosed
+	s.mu.Unlock()
+	<-s.doneChan
+	s.mu.Lock()
+	return nil, net.ErrClosed
 }
 
 func (s *singleConnListener) Close() error {
-	log.Printf("[DEBUG] singleConnListener.Close() called.")
-	close(s.done)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil
+	}
+	s.closed = true
 	if s.conn != nil {
-		log.Printf("[DEBUG] singleConnListener: closing underlying conn %v", s.conn.RemoteAddr())
 		s.conn.Close()
 	}
+	close(s.doneChan)
 	return nil
 }
 
 func (s *singleConnListener) Addr() net.Addr {
-	addr := s.conn.LocalAddr()
-	log.Printf("[DEBUG] singleConnListener.Addr() => %v", addr)
-	return addr
+	return s.conn.LocalAddr()
 }

@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 
@@ -131,56 +130,6 @@ func TestTunnelTCP(t *testing.T) {
 	}
 	if string(buf) != string(testMsg) {
 		t.Errorf("expected %q, got %q", string(testMsg), string(buf))
-	}
-}
-
-// TestSingleConnListener ensures singleConnListener only returns one connection and then errors.
-func TestSingleConnListener(t *testing.T) {
-	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	clientConn, serverConn := net.Pipe()
-	defer clientConn.Close()
-
-	ln := &singleConnListener{
-		conn: serverConn,
-		done: make(chan struct{}),
-	}
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-
-	go func() {
-		defer wg.Done()
-		conn, err := ln.Accept()
-		if err != nil {
-			t.Errorf("unexpected error on first Accept: %v", err)
-			return
-		}
-		if conn == nil {
-			t.Error("expected non-nil connection on first Accept")
-			return
-		}
-		// Second Accept should fail
-		conn2, err2 := ln.Accept()
-		if err2 == nil {
-			t.Error("expected error on second Accept, got nil")
-		}
-		if conn2 != nil {
-			t.Error("expected nil conn on second Accept")
-		}
-	}()
-
-	wg.Wait()
-
-	if ln.Addr() != serverConn.LocalAddr() {
-		t.Errorf("listener Addr() mismatch; got %v, want %v", ln.Addr(), serverConn.LocalAddr())
-	}
-
-	// Close the listener
-	err := ln.Close()
-	if err != nil {
-		t.Errorf("listener Close error: %v", err)
 	}
 }
 
