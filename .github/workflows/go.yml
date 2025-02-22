@@ -60,7 +60,7 @@ jobs:
           push: true
           file: ./Dockerfile
           tags: |
-            ghcr.io/<OWNER_OR_ORG>/<REPO_NAME>:latest
-            ghcr.io/<OWNER_OR_ORG>/<REPO_NAME>:${{ github.run_number }}
+            ghcr.io/suhaibinator/suhaibserver:latest
+            ghcr.io/suhaibinator/suhaibserver:${{ github.run_number }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
