@@ -18,7 +18,7 @@ RUN go mod download
 COPY . .
 
 # Build your Go application; adjust main.go or the build command as needed.
-RUN go build -o /go-bin/app ./cmd/yourapp
+RUN go build -o /go-bin/app
 
 ###
 # 2) Final runtime stage
