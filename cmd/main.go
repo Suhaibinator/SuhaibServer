@@ -51,11 +51,7 @@ func main() {
 	// }
 
 	// 4) Build the Proxy object
-	myProxy := &Proxy{
-		sniffer:  sniffer,
-		backends: backends,
-		// defaultBck: defaultBck,
-	}
+	myProxy := NewProxy(sniffer, backends, nil)
 
 	// 5) Start listening on :443
 

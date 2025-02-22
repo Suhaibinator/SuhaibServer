@@ -9,6 +9,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -206,6 +207,86 @@ func TestBuildReverseProxy(t *testing.T) {
 	}
 	if req.URL.Host != "example.com:1234" {
 		t.Errorf("expected host=example.com:1234, got %s", req.URL.Host)
+	}
+}
+
+// TestSingleConnListener checks that the listener returns exactly one connection
+// on the first Accept call. For subsequent Accept calls, it should block until
+// the connection (or the listener) is closed, then return net.ErrClosed.
+func TestSingleConnListener(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Create a pair of in-memory connection endpoints.
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+
+	// Wrap serverConn in our singleConnListener.
+	ln := newSingleConnListener(serverConn)
+
+	// 1) First Accept() should succeed and return the connection.
+	conn, err := ln.Accept()
+	if err != nil {
+		t.Fatalf("unexpected error on first Accept: %v", err)
+	}
+	if conn == nil {
+		t.Fatal("expected non-nil connection on first Accept")
+	}
+
+	// 2) Subsequent Accept() calls should block until the connection is closed.
+	// We'll test that it indeed blocks, then unblocks with net.ErrClosed.
+	errCh := make(chan error, 1)
+	go func() {
+		// This call should block until the connection or listener is closed.
+		c, e := ln.Accept()
+		if c != nil {
+			_ = c.Close() // be a good citizen and close if we got a conn (unlikely in this path)
+		}
+		errCh <- e
+	}()
+
+	// Check that it's still blocked after a small sleep, i.e. we haven't
+	// received from errCh yet.
+	select {
+	case e := <-errCh:
+		t.Fatalf("second Accept() returned prematurely with error: %v", e)
+	case <-time.After(100 * time.Millisecond):
+		// Good: accept is still blocking as expected.
+	}
+
+	// 3) Now close the first Accept()ed connection. This should unblock the second Accept()
+	// and cause it to return net.ErrClosed.
+	_ = conn.Close()
+
+	// Wait for the second Accept() to unblock.
+	var acceptErr error
+	select {
+	case <-ctx.Done():
+		t.Fatal("test timed out waiting for second Accept() to unblock")
+	case acceptErr = <-errCh:
+		// proceed
+	}
+
+	if !errors.Is(acceptErr, net.ErrClosed) {
+		t.Fatalf("expected second Accept() error to be net.ErrClosed, got: %v", acceptErr)
+	}
+
+	// 4) Check listener address is still reported correctly.
+	wantAddr := serverConn.LocalAddr()
+	gotAddr := ln.Addr()
+	if gotAddr != wantAddr {
+		t.Errorf("listener Addr() mismatch: got %v, want %v", gotAddr, wantAddr)
+	}
+
+	// 5) Close the listener; further Accept calls should also return net.ErrClosed.
+	if err := ln.Close(); err != nil {
+		t.Errorf("listener Close() error: %v", err)
+	}
+
+	// Optional: Verify that another Accept() after Close() returns net.ErrClosed immediately.
+	_, errAfterClose := ln.Accept()
+	if !errors.Is(errAfterClose, net.ErrClosed) {
+		t.Fatalf("expected Accept() after listener Close() to return net.ErrClosed; got %v", errAfterClose)
 	}
 }
 

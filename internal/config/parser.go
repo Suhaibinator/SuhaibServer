@@ -124,7 +124,11 @@ func LoadConfig(path string) (*Config, error) {
 
 	// At this point, cfg is loaded from either YAML or JSON.
 	// Let's fix up file paths by prepending /etc/certs if they're not absolute.
-	cfg.resolveCertPaths("/etc/certs")
+	certsPath := os.Getenv("CERTS_PATH")
+	if certsPath == "" {
+		certsPath = "/etc/certs"
+	}
+	cfg.resolveCertPaths(certsPath)
 
 	return &cfg, nil
 }
