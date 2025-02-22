@@ -5,14 +5,15 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
+	"strings"
 	"sync"
-	"time"
 
+	"github.com/Suhaibinator/SuhaibServer/config"
 	"golang.org/x/net/http2"
 )
 
@@ -42,36 +43,60 @@ type Backend struct {
 	ReverseProxy     *httputil.ReverseProxy
 }
 
-// NewBackend constructs a Backend and pre-builds any needed
-// TLS configs and reverse-proxy objects so it doesn't have
-// to do so on every incoming connection.
-func NewBackend(
-	terminateTLS bool,
-	useMTLS func(*url.URL) bool,
-	certFile, keyFile, rootCAFile string,
-	originServer, originPort string,
-) (*Backend, error) {
+// NewBackendFromConfig constructs a Backend based on a single
+// config.BackendConfig and pre-builds any needed TLS configs
+// and reverse-proxy objects.
+func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
+	// If no mTLS, define a no-op function.
+	var useMTLS func(*url.URL) bool
+	if !bcfg.MTLSEnabled || bcfg.MTLSEnforce == nil {
+		useMTLS = func(u *url.URL) bool { return false }
+	} else {
+		// Convert paths and queries to sets for faster membership checks.
+		pathSet := sliceToSet(bcfg.MTLSEnforce.Paths)
+		querySet := sliceToSet(bcfg.MTLSEnforce.Queries)
 
-	b := &Backend{
-		TerminateTLS: terminateTLS,
-		UseMTLS:      useMTLS,
-		TLSCertFile:  certFile,
-		TLSKeyFile:   keyFile,
-		RootCAFile:   rootCAFile,
-		OriginServer: originServer,
-		OriginPort:   originPort,
+		useMTLS = func(u *url.URL) bool {
+			// Check path prefixes:
+			for prefix := range pathSet {
+				if strings.HasPrefix(u.Path, prefix) {
+					return true
+				}
+			}
+
+			// Check query params via set membership:
+			q := u.Query()
+			for param := range querySet {
+				if q.Has(param) {
+					return true
+				}
+			}
+			return false
+		}
 	}
 
-	// 1) If we plan to terminate TLS, build the inbound TLS config now.
+	// Create the Backend with fundamental fields.
+	b := &Backend{
+		TerminateTLS: bcfg.TerminateTLS,
+		UseMTLS:      useMTLS,
+
+		TLSCertFile:  bcfg.TLSCertFile,
+		TLSKeyFile:   bcfg.TLSKeyFile,
+		RootCAFile:   bcfg.RootCAFile,
+		OriginServer: bcfg.OriginServer,
+		OriginPort:   bcfg.OriginPort,
+	}
+
+	// 3) If we plan to terminate TLS, build the inbound TLS config (which enforces client cert validation if MTLSEnabled).
 	if b.TerminateTLS {
-		tlsCfg, err := b.buildInboundTLSConfig()
+		tlsCfg, err := b.buildInboundTLSConfig(bcfg.MTLSEnabled)
 		if err != nil {
 			return nil, fmt.Errorf("buildInboundTLSConfig error: %w", err)
 		}
 		b.InboundTLSConfig = tlsCfg
 	}
 
-	// 2) Build the reverse proxy (if you plan to do HTTP forwarding).
+	// Build the reverse proxy (if you plan to do HTTP forwarding).
 	rp, err := b.buildReverseProxy()
 	if err != nil {
 		return nil, fmt.Errorf("buildReverseProxy error: %w", err)
@@ -79,6 +104,15 @@ func NewBackend(
 	b.ReverseProxy = rp
 
 	return b, nil
+}
+
+// sliceToSet is a helper converting a string slice to a set.
+func sliceToSet(items []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(items))
+	for _, v := range items {
+		set[v] = struct{}{}
+	}
+	return set
 }
 
 // Handle processes an incoming connection using this backend’s config.
@@ -134,17 +168,17 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 		done: make(chan struct{}),
 	}
 
-	// Our custom http.Server which will forward requests to b.ReverseProxy
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// 1) If we need mTLS, check if we got a client cert
+			// 1) If we need mTLS for this path/query, check if a cert was presented
+			// (At this point, any *invalid* cert would have failed the TLS handshake.)
 			if b.UseMTLS != nil && b.UseMTLS(r.URL) {
 				if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 					http.Error(w, "client certificate required", http.StatusUnauthorized)
 					return
 				}
-				// If using tls.RequireAndVerifyClientCert at handshake time,
-				// it would have failed earlier if the cert was invalid.
+				// If the certificate was provided but invalid, the handshake
+				// wouldn't have succeeded. So at this point, we know it's valid.
 			}
 
 			// 2) Possibly pass the real client IP to the origin
@@ -174,63 +208,59 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 	return nil
 }
 
-// buildInboundTLSConfig sets up inbound TLS for the server side,
-// optionally requesting client certs if b.RootCAFile is set.
-func (b *Backend) buildInboundTLSConfig() (*tls.Config, error) {
-	crt, err := tls.LoadX509KeyPair(b.TLSCertFile, b.TLSKeyFile)
+// buildInboundTLSConfig loads cert/key and optionally RootCA for verifying client certs.
+func (b *Backend) buildInboundTLSConfig(mtlsEnabled bool) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(b.TLSCertFile, b.TLSKeyFile)
 	if err != nil {
-		return nil, fmt.Errorf("LoadX509KeyPair error: %w", err)
-	}
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{crt},
-		ClientAuth:   tls.NoClientCert, // might override below
+		return nil, fmt.Errorf("failed to load key pair: %w", err)
 	}
 
-	if b.RootCAFile != "" {
-		caBytes, err := os.ReadFile(b.RootCAFile)
+	tlsCfg := &tls.Config{
+		Certificates: []tls.Certificate{cert},
+		// If you're using HTTP/2, the Go standard library might auto-enable it
+		// if the TLS config is compatible. You can further configure if needed.
+	}
+
+	// If mTLS is enabled and we have a RootCAFile, load it and configure ClientAuth.
+	if mtlsEnabled && b.RootCAFile != "" {
+		pool, err := loadCertPool(b.RootCAFile)
 		if err != nil {
-			return nil, fmt.Errorf("read rootCA file error: %w", err)
+			return nil, fmt.Errorf("could not load root CA file: %w", err)
 		}
-		caPool := x509.NewCertPool()
-		if !caPool.AppendCertsFromPEM(caBytes) {
-			return nil, fmt.Errorf("failed to parse rootCA PEM")
-		}
-		// We'll do a "request" client cert mode so clients can connect even if they don't present a cert,
-		// but in the HTTP handler we can reject them if we want. If you prefer fail at handshake, do:
-		//   tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
-		tlsCfg.ClientAuth = tls.RequestClientCert
-		tlsCfg.ClientCAs = caPool
+
+		// "VerifyClientCertIfGiven" means:
+		// - If a client cert is presented, we validate it.
+		// - If none is presented, the handshake still succeeds
+		//   (making partial mTLS possible).
+		//   If you want to *always* require a cert, use tls.RequireAndVerifyClientCert instead.
+		tlsCfg.ClientCAs = pool
+		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
 	}
 
 	return tlsCfg, nil
 }
 
-// buildReverseProxy creates a ReverseProxy for requests to b.OriginServer:b.OriginPort
+// buildReverseProxy constructs an httputil.ReverseProxy for the origin server.
 func (b *Backend) buildReverseProxy() (*httputil.ReverseProxy, error) {
-	targetURL := &url.URL{
-		Scheme: "http", // or "https" if your origin is HTTPS
-		Host:   net.JoinHostPort(b.OriginServer, b.OriginPort),
+	rawURL := fmt.Sprintf("http://%s:%s", b.OriginServer, b.OriginPort)
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse origin URL %q: %w", rawURL, err)
 	}
-	rp := httputil.NewSingleHostReverseProxy(targetURL)
+	return httputil.NewSingleHostReverseProxy(parsed), nil
+}
 
-	// Optionally customize the Transport if you want to do special TLS checks on the origin
-	rp.Transport = &http.Transport{
-		TLSHandshakeTimeout: 10 * time.Second,
-		ForceAttemptHTTP2:   true,
-		DisableKeepAlives:   false,
-		MaxIdleConns:        100,
-		IdleConnTimeout:     90 * time.Second,
-		// TLSClientConfig: &tls.Config{ ... } if you want custom CA to verify origin
+// Helper to load a CA cert file into an *x509.CertPool.
+func loadCertPool(caFile string) (*x509.CertPool, error) {
+	caBytes, err := ioutil.ReadFile(caFile)
+	if err != nil {
+		return nil, err
 	}
-
-	// You can customize the Director if needed
-	rp.Director = func(req *http.Request) {
-		req.URL.Scheme = targetURL.Scheme
-		req.URL.Host = targetURL.Host
-		// If you want to preserve the client's original Host header, you might do:
-		// req.Host = req.Header.Get("X-Forwarded-Host") // or something custom
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caBytes) {
+		return nil, fmt.Errorf("failed to append certs from %s", caFile)
 	}
-	return rp, nil
+	return pool, nil
 }
 
 // singleConnListener is a net.Listener that returns exactly one connection.

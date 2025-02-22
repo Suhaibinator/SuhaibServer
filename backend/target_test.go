@@ -19,6 +19,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Suhaibinator/SuhaibServer/config"
 )
 
 // TestNewBackend covers creation of a Backend using NewBackend.
@@ -29,8 +31,20 @@ func TestNewBackend(t *testing.T) {
 	defer cancel()
 
 	t.Run("terminateTLS=false", func(t *testing.T) {
-		// No cert/key needed
-		b, err := NewBackend(false, nil, "", "", "", "127.0.0.1", "8080")
+		// Build a BackendConfig that does NOT terminate TLS
+		bcfg := config.BackendConfig{
+			HostName:     "dummy",
+			TerminateTLS: false,
+			MTLSEnabled:  false,
+			// No cert/key needed when TLS termination is false
+			TLSCertFile:  "",
+			TLSKeyFile:   "",
+			RootCAFile:   "",
+			OriginServer: "127.0.0.1",
+			OriginPort:   "8080",
+		}
+
+		b, err := NewBackendFromConfig(bcfg)
 		if err != nil {
 			t.Fatalf("unexpected error creating backend: %v", err)
 		}
@@ -49,22 +63,23 @@ func TestNewBackend(t *testing.T) {
 	})
 
 	t.Run("terminateTLS=true with invalid cert/key", func(t *testing.T) {
-		_, err := NewBackend(
-			true,
-			nil,
-			"non_existent_cert.pem",
-			"non_existent_key.pem",
-			"",
-			"127.0.0.1",
-			"8080",
-		)
+		// Build a BackendConfig that DOES terminate TLS but points to non-existent cert/key
+		bcfg := config.BackendConfig{
+			HostName:     "dummyTLS",
+			TerminateTLS: true,
+			MTLSEnabled:  false,
+			TLSCertFile:  "non_existent_cert.pem",
+			TLSKeyFile:   "non_existent_key.pem",
+			RootCAFile:   "",
+			OriginServer: "127.0.0.1",
+			OriginPort:   "8080",
+		}
+
+		_, err := NewBackendFromConfig(bcfg)
 		if err == nil {
 			t.Fatal("expected error due to invalid cert/key file paths, got nil")
 		}
 	})
-
-	// If you have actual cert/key on disk, you can test successful load:
-	// (In real tests, you'd typically store these files in a `testdata` folder)
 }
 
 // TestTunnelTCP verifies that data is tunneled correctly over a raw TCP connection.
@@ -196,19 +211,25 @@ func TestBuildInboundTLSConfig(t *testing.T) {
 		t.Fatalf("failed to write key file: %v", err)
 	}
 
+	// Create a Backend with the cert/key, no RootCA
 	b := &Backend{
 		TLSCertFile: certFile,
 		TLSKeyFile:  keyFile,
 		RootCAFile:  "",
 	}
 
-	cfg, err := b.buildInboundTLSConfig()
+	// Here we explicitly pass 'false' to indicate mTLS is disabled.
+	cfg, err := b.buildInboundTLSConfig(false)
 	if err != nil {
-		t.Fatalf("BuildInboundTLSConfig error: %v", err)
+		t.Fatalf("buildInboundTLSConfig(false) error: %v", err)
 	}
+
+	// We should have exactly one certificate loaded.
 	if len(cfg.Certificates) != 1 {
 		t.Errorf("expected exactly 1 certificate, got %d", len(cfg.Certificates))
 	}
+
+	// Because we passed false, we expect no client cert enforcement.
 	if cfg.ClientAuth != tls.NoClientCert {
 		t.Errorf("expected NoClientCert, got %v", cfg.ClientAuth)
 	}

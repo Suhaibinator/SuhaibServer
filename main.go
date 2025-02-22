@@ -3,27 +3,69 @@ package main
 import (
 	"log"
 	"net"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/Suhaibinator/SuhaibServer/backend"
+	"github.com/Suhaibinator/SuhaibServer/config" // <-- Import your config package
 	"github.com/Suhaibinator/SuhaibServer/proxy_router"
 )
 
 func main() {
+	// Expect the config file path as a CLI argument, e.g. "./SuhaibServer config.yaml"
+	if len(os.Args) < 2 {
+		log.Fatalf("Usage: %s <config-file>", os.Args[0])
+	}
+	configFilePath := os.Args[1]
+
+	// 1) Load the config (YAML or JSON) into a typed structure.
+	cfg, err := config.LoadConfig(configFilePath)
+	if err != nil {
+		log.Fatalf("Error loading config file %q: %v", configFilePath, err)
+	}
+
+	// 2) Create our SNI sniffer from the loaded config.
+	sniffer := proxy_router.SniSniffer{
+		MaxReadSize: cfg.SniSniffer.MaxReadSize,
+		Timeout:     cfg.SniSniffer.Timeout.Duration,
+	}
+
+	// 3) Create a map of SNI hostname -> Backend from the config.
+	backends := make(map[string]*backend.Backend)
+	for _, bcfg := range cfg.Backends {
+		be, err := backend.NewBackendFromConfig(bcfg)
+		if err != nil {
+			log.Fatalf("Failed to create backend for HostName=%s: %v", bcfg.HostName, err)
+		}
+		backends[bcfg.HostName] = be
+	}
+
+	// Optional: if your config has a notion of a default backend, set it here:
+	// var defaultBck *backend.Backend
+	// if cfg.DefaultBackend != nil {
+	//     defaultBck, err = backend.NewBackendFromConfig(*cfg.DefaultBackend)
+	//     if err != nil {
+	//         log.Fatalf("Failed to create default backend: %v", err)
+	//     }
+	// }
+
+	// 4) Build the Proxy object
+	myProxy := &Proxy{
+		sniffer:  sniffer,
+		backends: backends,
+		// defaultBck: defaultBck,
+	}
+
+	// 5) Start listening on :443
+
 	ln, err := net.Listen("tcp", ":443")
 	if err != nil {
 		log.Fatalf("Error listening: %v", err)
 	}
 	log.Println("Listening on :443")
 
-	myProxy := Proxy{
-		sniffer: proxy_router.SniSniffer{
-			MaxReadSize: 65536,
-			Timeout:     5 * time.Second,
-		},
-	}
-
+	// 6) Accept connections in a loop
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -34,11 +76,12 @@ func main() {
 	}
 }
 
+// Proxy wraps a sniffer, a map of backends, and an optional default backend.
 type Proxy struct {
 	sniffer    proxy_router.SniSniffer
 	mu         sync.RWMutex
 	backends   map[string]*backend.Backend
-	defaultBck *backend.Backend // optional: a default if no match
+	defaultBck *backend.Backend // optional fallback
 }
 
 func NewProxy(sniffer proxy_router.SniSniffer, backends map[string]*backend.Backend, defaultBackend *backend.Backend) *Proxy {
@@ -66,7 +109,7 @@ func (p *Proxy) handleConnection(conn net.Conn) {
 	// Create a PeekedConn so further reads see the same initial bytes
 	pconn := proxy_router.NewPeekedConn(conn, peekedData)
 
-	// 1) Lock and find the matching backend
+	// 1) Look up the matching backend
 	p.mu.RLock()
 	chosenBackend, ok := p.backends[sni]
 	p.mu.RUnlock()
