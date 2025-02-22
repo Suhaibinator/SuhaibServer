@@ -168,7 +168,7 @@ func TestSniSniffer_SniffSNI(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "Invalid TLS version",
+			name: "Other TLS version",
 			sniffer: SniSniffer{
 				MaxReadSize: 65536,
 				Timeout:     0,
@@ -180,9 +180,8 @@ func TestSniSniffer_SniffSNI(t *testing.T) {
 					buildClientHelloPayload("test.com"),
 				),
 			},
-			wantSNI:     "",
-			wantErr:     true,
-			errContains: "unsupported TLS version 3.3",
+			wantSNI: "test.com",
+			wantErr: false,
 		},
 		{
 			name: "Record length = 0",
