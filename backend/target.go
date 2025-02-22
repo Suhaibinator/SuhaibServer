@@ -5,11 +5,11 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 
@@ -252,7 +252,7 @@ func (b *Backend) buildReverseProxy() (*httputil.ReverseProxy, error) {
 
 // Helper to load a CA cert file into an *x509.CertPool.
 func loadCertPool(caFile string) (*x509.CertPool, error) {
-	caBytes, err := ioutil.ReadFile(caFile)
+	caBytes, err := os.ReadFile(caFile)
 	if err != nil {
 		return nil, err
 	}
