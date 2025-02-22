@@ -1,6 +1,10 @@
 package proxy_router
 
-import "net"
+import (
+	"bytes"
+	"io"
+	"net"
+)
 
 type PeekedConn struct {
 	net.Conn
@@ -21,23 +25,38 @@ func NewPeekedConn(conn net.Conn, peeked []byte) *PeekedConn {
 	}
 }
 
-// Read first consumes peeked data, then continues reading from the underlying conn
-func (pc *PeekedConn) Read(b []byte) (int, error) {
-	totalRead := 0
+// Read first serves data from the peeked buffer, then from the underlying conn.
+func (pc *PeekedConn) Read(b []byte) (n int, err error) {
+	// If we still have unconsumed peeked data, serve that first.
 
-	// 1. Serve unconsumed peeked data if any
 	if pc.offset < len(pc.peeked) {
-		n := copy(b, pc.peeked[pc.offset:])
+		n = copy(b, pc.peeked[pc.offset:])
 		pc.offset += n
-		totalRead += n
-		// If we filled the entire buffer from peeked data, return now
-		if n == len(b) {
-			return totalRead, nil
-		}
-	}
+		return n, nil
 
-	// 2. If there's still capacity in b, read from underlying connection
-	rn, err := pc.Conn.Read(b[totalRead:])
-	totalRead += rn
-	return totalRead, err
+	}
+	// Otherwise read from the underlying connection
+	return pc.Conn.Read(b)
+
+}
+
+// multiReaderConn wraps a net.Conn so that its Read() method
+// first returns data from an in-memory buffer (the "peeked" bytes)
+// and then transparently continues reading from the original conn.
+type multiReaderConn struct {
+	net.Conn // embed so we inherit all net.Conn methods
+	reader   io.Reader
+}
+
+func (m *multiReaderConn) Read(b []byte) (int, error) {
+	return m.reader.Read(b)
+}
+
+// NewMultiReaderConn creates a net.Conn whose Read() method will
+// first return peekedData, then read from originalConn.
+func NewMultiReaderConn(originalConn net.Conn, peekedData []byte) net.Conn {
+	return &multiReaderConn{
+		Conn:   originalConn,
+		reader: io.MultiReader(bytes.NewReader(peekedData), originalConn),
+	}
 }

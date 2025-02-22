@@ -53,13 +53,18 @@ func main() {
 	// 4) Build the Proxy object
 	myProxy := NewProxy(sniffer, backends, nil)
 
-	// 5) Start listening on :443
+	// 5) Start listening on
 
-	ln, err := net.Listen("tcp", ":443")
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "443"
+	}
+
+	ln, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Fatalf("Error listening: %v", err)
 	}
-	log.Println("Listening on :443")
+	log.Println("Listening on port " + port)
 
 	// 6) Accept connections in a loop
 	for {
@@ -88,7 +93,6 @@ func NewProxy(sniffer proxy_router.SniSniffer, backends map[string]*backend.Back
 	}
 }
 
-// handleConnection is called for each incoming connection.
 func (p *Proxy) handleConnection(conn net.Conn) {
 	// e.g. 10s overall deadline for the handshake sniff
 	conn.SetDeadline(time.Now().Add(10 * time.Second))
