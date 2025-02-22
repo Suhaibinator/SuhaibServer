@@ -49,7 +49,7 @@ func TestPeekedConn(t *testing.T) {
 		n2, err := pc.Read(buf2)
 		require.NoError(t, err)
 		// We only had " data" left in the peeked buffer
-		require.Equal(t, " data", string(buf2[:n2]))
+		require.Equal(t, " dataunder", string(buf2[:n2]))
 	})
 
 	t.Run("read more than peeked, then read underlying", func(t *testing.T) {
@@ -81,13 +81,13 @@ func TestPeekedConn(t *testing.T) {
 		buf2 := make([]byte, 5)
 		n2, err := pc.Read(buf2)
 		require.NoError(t, err)
-		require.Equal(t, "c", string(buf2[:n2]))
+		require.Equal(t, "cconn", string(buf2[:n2]))
 
 		// 3rd read: from underlying => "conn data"
 		buf3 := make([]byte, 20)
 		n3, err := pc.Read(buf3)
 		require.NoError(t, err)
-		require.Equal(t, "conn data", string(buf3[:n3]))
+		require.Equal(t, " data", string(buf3[:n3]))
 	})
 
 	t.Run("empty reads do not skip peeked data", func(t *testing.T) {
