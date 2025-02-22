@@ -43,13 +43,9 @@ func (s *SniSniffer) SniffSNI(conn net.Conn) (sni string, allData []byte, err er
 		}
 		allData = append(allData, header...)
 
-		recordType := header[0]   // 0x16 == Handshake
-		versionMajor := header[1] // e.g. 0x03
-		versionMinor := header[2] // e.g. 0x03 (TLS 1.2), 0x04 (TLS 1.3)
-
-		if versionMajor != 0x03 || versionMinor != 0x04 {
-			return "", allData, fmt.Errorf("unsupported TLS version %d.%d", versionMajor, versionMinor)
-		}
+		recordType := header[0] // 0x16 == Handshake
+		// versionMajor := header[1] // e.g. 0x03
+		// versionMinor := header[2] // e.g. 0x03 (TLS 1.2), 0x04 (TLS 1.3)
 
 		recordLen := int(header[3])<<8 | int(header[4])
 
