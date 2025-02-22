@@ -23,7 +23,7 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    needs: build  # Only run if 'build' completes successfully
+    needs: build
     steps:
       - name: Check out code
         uses: actions/checkout@v3
@@ -38,3 +38,29 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          file: ./Dockerfile
+          tags: |
+            ghcr.io/suhaibinator/suhaibserver:latest
+            ghcr.io/suhaibinator/suhaibserver:${{ github.run_number }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}

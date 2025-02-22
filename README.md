@@ -1,8 +1,6 @@
 # SuhaibServer
 
-[![Build](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/build.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/build.yaml)
-[![Test](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/test.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/test.yaml)
-[![Publish](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/publish.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/publish.yaml)
+[![Build, Test, Publish](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/ci.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/ci.yaml)
 
 **SuhaibServer** is a reverse proxy designed to simplify and enhance TLS and mTLS (Mutual TLS) management beyond what is typically possible in solutions like NGINX or Apache. By leveraging **SNI (Server Name Indication)**, SuhaibServer allows you to define highly granular routing and security policies per domain—right down to specific URLs and query parameters.
 
