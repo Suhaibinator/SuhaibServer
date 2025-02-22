@@ -54,7 +54,7 @@
    ```bash
    go build -o suhaibserver ./cmd/main.go
    ```
-   (Requires Go 1.18+ or newer.)
+   (Requires Go 1.24+ or newer.)
 
 3. **Run** the binary with a config file:
    ```bash
