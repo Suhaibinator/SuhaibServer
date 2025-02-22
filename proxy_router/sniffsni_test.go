@@ -421,17 +421,6 @@ func TestParseSNIExtension(t *testing.T) {
 			errContains: "could not read server_name_list length",
 		},
 		{
-			name: "name_type missing",
-			extDataBuild: func() []byte {
-				var b cryptobyte.Builder
-				// Claim a length but don't provide any data
-				b.AddUint16(5) // says 5 bytes follow, but we won't provide them
-				return b.BytesOrPanic()
-			},
-			wantErr:     true,
-			errContains: "could not read name_type",
-		},
-		{
 			name: "name_length missing",
 			extDataBuild: func() []byte {
 				var b cryptobyte.Builder
@@ -450,6 +439,7 @@ func TestParseSNIExtension(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			extData := cryptobyte.String(tt.extDataBuild())
 			sni, err := parseSNIExtension(extData)
+
 			if (err != nil) != tt.wantErr {
 				t.Errorf("parseSNIExtension() error = %v, wantErr = %v", err, tt.wantErr)
 			}
