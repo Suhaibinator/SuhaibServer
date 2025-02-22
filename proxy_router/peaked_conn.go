@@ -21,14 +21,23 @@ func NewPeekedConn(conn net.Conn, peeked []byte) *PeekedConn {
 	}
 }
 
-// Read first serves data from the peeked buffer, then from the underlying conn.
-func (pc *PeekedConn) Read(b []byte) (n int, err error) {
-	// If we still have unconsumed peeked data, serve that first.
+// Read first consumes peeked data, then continues reading from the underlying conn
+func (pc *PeekedConn) Read(b []byte) (int, error) {
+	totalRead := 0
+
+	// 1. Serve unconsumed peeked data if any
 	if pc.offset < len(pc.peeked) {
-		n = copy(b, pc.peeked[pc.offset:])
+		n := copy(b, pc.peeked[pc.offset:])
 		pc.offset += n
-		return n, nil
+		totalRead += n
+		// If we filled the entire buffer from peeked data, return now
+		if n == len(b) {
+			return totalRead, nil
+		}
 	}
-	// Otherwise read from the underlying connection
-	return pc.Conn.Read(b)
+
+	// 2. If there's still capacity in b, read from underlying connection
+	rn, err := pc.Conn.Read(b[totalRead:])
+	totalRead += rn
+	return totalRead, err
 }
