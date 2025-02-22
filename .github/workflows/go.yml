@@ -49,8 +49,8 @@ jobs:
           file: ./Dockerfile
           # Replace "OWNER/REPO" in the tags below with the "org/repo" or "user/repo" of your repository
           tags: |
-            ghcr.io/${{ github.repository }}:latest
-            ghcr.io/${{ github.repository }}:${{ github.run_number }}
+            ghcr.io/suhaibserver:latest
+            ghcr.io/suhaibserver:${{ github.run_number }}
           # Optionally add OCI labels
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
