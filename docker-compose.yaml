@@ -9,7 +9,7 @@ services:
       - source: suhaibserver_config
         target: /etc/suhaibserver/config.yaml
     volumes:
-      - certs-volume:/etc/certs:ro
+      - /etc/nginx/ssl/:/etc/certs/:ro
     deploy:
       replicas: 1
 
