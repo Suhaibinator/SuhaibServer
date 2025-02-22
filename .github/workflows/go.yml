@@ -1,0 +1,56 @@
+name: Go Build, Test, and Publish to GHCR
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1) Check out your code
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      # 2) Set up Go
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
+      # 3) Build your Go project
+      - name: Build
+        run: go build ./...
+
+      # 4) Run tests
+      - name: Test
+        run: go test -v ./...
+
+      # If tests fail, this workflow stops here and won't publish the Docker image.
+
+      # 5) Log in to GitHub Container Registry using GITHUB_TOKEN
+      - name: Log in to GHCR
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 6) Build and push Docker image to GHCR
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v4
+        with:
+          context: .
+          push: true
+          # Adjust Dockerfile path if not named "Dockerfile" or in a different location
+          file: ./Dockerfile
+          # Replace "OWNER/REPO" in the tags below with the "org/repo" or "user/repo" of your repository
+          tags: |
+            ghcr.io/${{ github.repository }}:latest
+            ghcr.io/${{ github.repository }}:${{ github.run_number }}
+          # Optionally add OCI labels
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
