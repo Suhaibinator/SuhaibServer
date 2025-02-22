@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   suhaibserver:
-    image: my-suhaibserver:latest
+    image: ghcr.io/suhaibinator/suhaibserver:latest
     ports:
       - "443:443"
     configs:
