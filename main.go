@@ -36,9 +36,9 @@ func main() {
 	for _, bcfg := range cfg.Backends {
 		be, err := backend.NewBackendFromConfig(bcfg)
 		if err != nil {
-			log.Fatalf("Failed to create backend for HostName=%s: %v", bcfg.HostName, err)
+			log.Fatalf("Failed to create backend for HostName=%s: %v", bcfg.Hostname, err)
 		}
-		backends[bcfg.HostName] = be
+		backends[bcfg.Hostname] = be
 	}
 
 	// Optional: if your config has a notion of a default backend, set it here:

@@ -33,7 +33,7 @@ func TestNewBackend(t *testing.T) {
 	t.Run("terminateTLS=false", func(t *testing.T) {
 		// Build a BackendConfig that does NOT terminate TLS
 		bcfg := config.BackendConfig{
-			HostName:     "dummy",
+			Hostname:     "dummy",
 			TerminateTLS: false,
 			MTLSEnabled:  false,
 			// No cert/key needed when TLS termination is false
@@ -65,7 +65,7 @@ func TestNewBackend(t *testing.T) {
 	t.Run("terminateTLS=true with invalid cert/key", func(t *testing.T) {
 		// Build a BackendConfig that DOES terminate TLS but points to non-existent cert/key
 		bcfg := config.BackendConfig{
-			HostName:     "dummyTLS",
+			Hostname:     "dummyTLS",
 			TerminateTLS: true,
 			MTLSEnabled:  false,
 			TLSCertFile:  "non_existent_cert.pem",

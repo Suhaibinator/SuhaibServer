@@ -61,23 +61,40 @@ type SniSnifferConfig struct {
 	Timeout     Duration `yaml:"Timeout"     json:"Timeout"`
 }
 
-// The rest of your backend config is unchanged
-type BackendConfig struct {
-	HostName     string             `yaml:"HostName"     json:"HostName"`
-	TerminateTLS bool               `yaml:"TerminateTLS" json:"TerminateTLS"`
-	MTLSEnabled  bool               `yaml:"MTLSEnabled"  json:"MTLSEnabled"`
-	MTLSEnforce  *MTLSEnforceConfig `yaml:"MTLSEnforce"  json:"MTLSEnforce"`
+type MTLSPolicy struct {
+	// If true, *every* request requires mTLS by default—unless
+	// the request matches an exception below.
+	// If false, no request requires mTLS by default—unless
+	// it matches an exception below.
+	Default bool `yaml:"default" json:"default"`
 
-	TLSCertFile  string `yaml:"TLSCertFile"  json:"TLSCertFile"`
-	TLSKeyFile   string `yaml:"TLSKeyFile"   json:"TLSKeyFile"`
-	RootCAFile   string `yaml:"RootCAFile"   json:"RootCAFile"`
-	OriginServer string `yaml:"OriginServer" json:"OriginServer"`
-	OriginPort   string `yaml:"OriginPort"   json:"OriginPort"`
+	// These are path prefixes for which we will *invert* the default.
+	// e.g. if Default=true => these paths will *not* require mTLS
+	// if Default=false => these paths *will* require mTLS.
+	Paths []string `yaml:"paths" json:"paths"`
+
+	// Same logic as Paths, but for query parameters: if any of these
+	// query params are present, invert the default behavior.
+	Queries []string `yaml:"queries" json:"queries"`
 }
 
-type MTLSEnforceConfig struct {
-	Paths   []string `yaml:"Paths"   json:"Paths"`
-	Queries []string `yaml:"Queries" json:"Queries"`
+type BackendConfig struct {
+	// The SNI hostname this config applies to.
+	Hostname string `yaml:"hostname" json:"hostname"`
+
+	// If false, no mTLS is used at all (TLS only).
+	// If true, we consult MTLSPolicy to decide if a given
+	// path/query enforces mTLS or not.
+	MTLSEnabled bool        `yaml:"mtlsEnabled" json:"mtlsEnabled"`
+	MTLSPolicy  *MTLSPolicy `yaml:"mtlsPolicy"  json:"mtlsPolicy"`
+
+	TerminateTLS bool   `yaml:"terminateTLS" json:"terminateTLS"`
+	TLSCertFile  string `yaml:"tlsCertFile"  json:"tlsCertFile"`
+	TLSKeyFile   string `yaml:"tlsKeyFile"   json:"tlsKeyFile"`
+	RootCAFile   string `yaml:"rootCAFile"   json:"rootCAFile"`
+
+	OriginServer string `yaml:"originServer" json:"originServer"`
+	OriginPort   string `yaml:"originPort"   json:"originPort"`
 }
 
 // LoadConfig attempts to parse the given file as YAML first,

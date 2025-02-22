@@ -17,65 +17,25 @@ import (
 	"golang.org/x/net/http2"
 )
 
-// Backend describes how to handle a particular SNI domain.
 type Backend struct {
-	// If true, terminate TLS locally. If false, pass through raw TCP.
 	TerminateTLS bool
+	UseMTLS      func(*url.URL) bool
 
-	// UseMTLS is called (per request) to decide if the client MUST present a certificate.
-	UseMTLS func(incomingURL *url.URL) bool
-
-	// The certificate/key to present if terminating TLS:
 	TLSCertFile string
 	TLSKeyFile  string
+	RootCAFile  string
 
-	// RootCAFile is the CA used to verify client certs if mTLS is enabled.
-	// If empty, we won't forcibly verify client certs at handshake time
-	// (we do a partial check in the HTTP handler).
-	RootCAFile string
-
-	// The origin server and port for reverse-proxy.
 	OriginServer string
 	OriginPort   string
 
-	// Pre-built objects for efficiency:
 	InboundTLSConfig *tls.Config
 	ReverseProxy     *httputil.ReverseProxy
 }
 
-// NewBackendFromConfig constructs a Backend based on a single
-// config.BackendConfig and pre-builds any needed TLS configs
-// and reverse-proxy objects.
 func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
-	// If no mTLS, define a no-op function.
-	var useMTLS func(*url.URL) bool
-	if !bcfg.MTLSEnabled || bcfg.MTLSEnforce == nil {
-		useMTLS = func(u *url.URL) bool { return false }
-	} else {
-		// Convert paths and queries to sets for faster membership checks.
-		pathSet := sliceToSet(bcfg.MTLSEnforce.Paths)
-		querySet := sliceToSet(bcfg.MTLSEnforce.Queries)
+	// Build the UseMTLS function according to MTLSEnabled and MTLSPolicy.
+	useMTLS := buildMTLSLogic(bcfg)
 
-		useMTLS = func(u *url.URL) bool {
-			// Check path prefixes:
-			for prefix := range pathSet {
-				if strings.HasPrefix(u.Path, prefix) {
-					return true
-				}
-			}
-
-			// Check query params via set membership:
-			q := u.Query()
-			for param := range querySet {
-				if q.Has(param) {
-					return true
-				}
-			}
-			return false
-		}
-	}
-
-	// Create the Backend with fundamental fields.
 	b := &Backend{
 		TerminateTLS: bcfg.TerminateTLS,
 		UseMTLS:      useMTLS,
@@ -87,7 +47,6 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 		OriginPort:   bcfg.OriginPort,
 	}
 
-	// 3) If we plan to terminate TLS, build the inbound TLS config (which enforces client cert validation if MTLSEnabled).
 	if b.TerminateTLS {
 		tlsCfg, err := b.buildInboundTLSConfig(bcfg.MTLSEnabled)
 		if err != nil {
@@ -96,7 +55,6 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 		b.InboundTLSConfig = tlsCfg
 	}
 
-	// Build the reverse proxy (if you plan to do HTTP forwarding).
 	rp, err := b.buildReverseProxy()
 	if err != nil {
 		return nil, fmt.Errorf("buildReverseProxy error: %w", err)
@@ -106,7 +64,56 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 	return b, nil
 }
 
-// sliceToSet is a helper converting a string slice to a set.
+// buildMTLSLogic returns a function that decides whether a given path/query requires mTLS.
+// This encapsulates the “default plus exceptions” logic.
+func buildMTLSLogic(bcfg config.BackendConfig) func(u *url.URL) bool {
+	// If mTLS isn’t enabled globally, always return false.
+	if !bcfg.MTLSEnabled {
+		return func(u *url.URL) bool { return false }
+	}
+
+	// If we *are* enabled but have no policy, decide how you want to handle it:
+	if bcfg.MTLSPolicy == nil {
+		// E.g. you could default to always requiring mTLS:
+		return func(u *url.URL) bool { return true }
+	}
+
+	// Extract the default and the exceptions from MTLSPolicy.
+	defaultMTLS := bcfg.MTLSPolicy.Default
+	pathSet := sliceToSet(bcfg.MTLSPolicy.Paths)
+	querySet := sliceToSet(bcfg.MTLSPolicy.Queries)
+
+	return func(u *url.URL) bool {
+		// Quick check: does this request match an exception?
+		matchesException := false
+
+		// Check path prefixes first
+		for prefix := range pathSet {
+			if strings.HasPrefix(u.Path, prefix) {
+				matchesException = true
+				break
+			}
+		}
+		// If no path matched, check the query params
+		if !matchesException {
+			q := u.Query()
+			for param := range querySet {
+				if q.Has(param) {
+					matchesException = true
+					break
+				}
+			}
+		}
+
+		// If it’s in the exceptions, invert the default.
+		if matchesException {
+			return !defaultMTLS
+		}
+		// Otherwise, stick to default.
+		return defaultMTLS
+	}
+}
+
 func sliceToSet(items []string) map[string]struct{} {
 	set := make(map[string]struct{}, len(items))
 	for _, v := range items {
