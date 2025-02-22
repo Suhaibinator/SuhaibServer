@@ -29,11 +29,6 @@ func (s *SniSniffer) SniffSNI(conn net.Conn) (sni string, allData []byte, err er
 	clientHelloNeeded := -1
 
 	for {
-		// If we've read too much data without finishing the ClientHello, abort.
-		if len(allData) > s.MaxReadSize {
-			return "", allData, fmt.Errorf("too much data without completing ClientHello, possible attack")
-		}
-
 		// ---------------------------------------------------------------------
 		// 1) Read the 5-byte TLS record header
 		// ---------------------------------------------------------------------
@@ -80,6 +75,10 @@ func (s *SniSniffer) SniffSNI(conn net.Conn) (sni string, allData []byte, err er
 			return "", allData, fmt.Errorf("failed reading record payload: %v", err)
 		}
 		allData = append(allData, payload...)
+
+		if len(allData) > s.MaxReadSize {
+			return "", allData, fmt.Errorf("too much data without completing ClientHello, possible attack")
+		}
 
 		// ---------------------------------------------------------------------
 		// 3) We only care about Handshake records for the ClientHello
