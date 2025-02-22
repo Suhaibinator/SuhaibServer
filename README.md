@@ -1,3 +1,3 @@
 [![Build](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/build.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/build.yaml)
-
+[![Test](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/test.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/test.yaml)
 [![Publish](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/publish.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/publish.yaml)
