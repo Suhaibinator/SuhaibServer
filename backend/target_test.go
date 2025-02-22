@@ -2,6 +2,7 @@ package backend
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -24,6 +25,9 @@ import (
 // We demonstrate tests for both the "terminateTLS" == false case,
 // and the "terminateTLS" == true case.
 func TestNewBackend(t *testing.T) {
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	t.Run("terminateTLS=false", func(t *testing.T) {
 		// No cert/key needed
 		b, err := NewBackend(false, nil, "", "", "", "127.0.0.1", "8080")
@@ -65,31 +69,50 @@ func TestNewBackend(t *testing.T) {
 
 // TestTunnelTCP verifies that data is tunneled correctly over a raw TCP connection.
 func TestTunnelTCP(t *testing.T) {
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// This is your "client" connection:
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 	defer serverConn.Close()
 
-	// We'll simulate the "backend" server side by hooking a net.Pipe to tunnelTCP's server side.
-	go func() {
-		// The function under test:
-		_ = tunnelTCP(serverConn, "doesnt-matter") // We'll ignore the "backendAddr" here
+	// Start a real TCP listener to represent the backend.
+	backendLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen on backend: %v", err)
+	}
+	defer backendLn.Close()
 
-		// Normally, tunnelTCP would dial out to the "backendAddr". If you want to fully test
-		// the dial portion, you might replace net.Pipe with a real TCP listener on ephemeral port.
+	// Handle one incoming connection in the backend by simply echoing data
+	go func() {
+		backendConn, err := backendLn.Accept()
+		if err != nil {
+			return
+		}
+		defer backendConn.Close()
+		// In a real scenario, you'd read/write to backendConn
+		// For testing, maybe just echo the data
+		_, _ = io.Copy(backendConn, backendConn)
 	}()
 
-	// Write some data from the "client" side, expect to see it on the server side.
+	// Launch tunnelTCP in a goroutine, using the real backend address
+	go func() {
+		_ = tunnelTCP(serverConn, backendLn.Addr().String())
+	}()
+
+	// Now test that data from clientConn goes through the tunnel -> backend -> back
 	testMsg := []byte("hello tunnel")
-	_, err := clientConn.Write(testMsg)
+	_, err = clientConn.Write(testMsg)
 	if err != nil {
 		t.Fatalf("failed to write to clientConn: %v", err)
 	}
 
-	// Try reading from serverConn to verify the data arrived
+	// In this simple echo example, read it back on clientConn
 	buf := make([]byte, len(testMsg))
-	_, err = io.ReadFull(serverConn, buf)
+	_, err = io.ReadFull(clientConn, buf)
 	if err != nil {
-		t.Fatalf("failed to read from serverConn: %v", err)
+		t.Fatalf("failed to read echoed data: %v", err)
 	}
 	if string(buf) != string(testMsg) {
 		t.Errorf("expected %q, got %q", string(testMsg), string(buf))
@@ -98,6 +121,9 @@ func TestTunnelTCP(t *testing.T) {
 
 // TestSingleConnListener ensures singleConnListener only returns one connection and then errors.
 func TestSingleConnListener(t *testing.T) {
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	clientConn, serverConn := net.Pipe()
 	defer clientConn.Close()
 
@@ -147,6 +173,9 @@ func TestSingleConnListener(t *testing.T) {
 // It expects valid cert/key files. For demonstration, we generate them on-the-fly
 // in code, but you could load them from testdata if you prefer.
 func TestBuildInboundTLSConfig(t *testing.T) {
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// Generate a temporary self-signed cert/key
 	certPem, keyPem, err := generateSelfSignedCert()
 	if err != nil {
@@ -188,6 +217,9 @@ func TestBuildInboundTLSConfig(t *testing.T) {
 // TestBuildReverseProxy does a simple check that a ReverseProxy is created
 // with the correct origin host/port.
 func TestBuildReverseProxy(t *testing.T) {
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	b := &Backend{
 		OriginServer: "example.com",
 		OriginPort:   "1234",
@@ -212,6 +244,9 @@ func TestBuildReverseProxy(t *testing.T) {
 // to fully exercise the http.Server / TLS handshake logic. That becomes
 // more of an integration test than a pure unit test.
 func TestBackendHandle_PassThrough(t *testing.T) {
+	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
 	// Create a backend that does NOT terminate TLS
 	b := &Backend{
 		TerminateTLS: false,

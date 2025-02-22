@@ -246,7 +246,6 @@ func (s *singleConnListener) Accept() (net.Conn, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.used {
-		<-s.done
 		return nil, fmt.Errorf("no more connections")
 	}
 	s.used = true
