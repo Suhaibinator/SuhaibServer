@@ -1,1 +1,3 @@
-[![Go Build, Test, and Publish to GHCR](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/go.yml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/go.yml)
+[![Build](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/build.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/build.yaml)
+
+[![Publish](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/publish.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/publish.yaml)
