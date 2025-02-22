@@ -7,31 +7,45 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-test-publish:
+  build:
     runs-on: ubuntu-latest
-
     steps:
-      # 1) Check out your code
       - name: Check out code
         uses: actions/checkout@v3
 
-      # 2) Set up Go
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
           go-version: '1.24'
 
-      # 3) Build your Go project
       - name: Build
         run: go build ./...
 
-      # 4) Run tests
+  test:
+    runs-on: ubuntu-latest
+    needs: build  # <-- This ensures "test" only runs if "build" succeeds.
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.24'
+
       - name: Test
         run: go test -v ./...
 
-      # If tests fail, this workflow stops here and won't publish the Docker image.
+  publish:
+    runs-on: ubuntu-latest
+    needs: test  # <-- This ensures "publish" only runs if "test" (and therefore "build") succeeds.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
 
-      # 5) Log in to GitHub Container Registry using GITHUB_TOKEN
       - name: Log in to GHCR
         uses: docker/login-action@v2
         with:
@@ -39,18 +53,14 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 6) Build and push Docker image to GHCR
       - name: Build and Push Docker Image
         uses: docker/build-push-action@v4
         with:
           context: .
           push: true
-          # Adjust Dockerfile path if not named "Dockerfile" or in a different location
           file: ./Dockerfile
-          # Replace "OWNER/REPO" in the tags below with the "org/repo" or "user/repo" of your repository
           tags: |
-            ghcr.io/suhaibinator/suhaibserver:latest
-            ghcr.io/suhaibinator/suhaibserver:${{ github.run_number }}
-          # Optionally add OCI labels
+            ghcr.io/<OWNER_OR_ORG>/<REPO_NAME>:latest
+            ghcr.io/<OWNER_OR_ORG>/<REPO_NAME>:${{ github.run_number }}
           labels: |
             org.opencontainers.image.source=${{ github.repository }}
