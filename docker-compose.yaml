@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  suhaibserver:
+    image: my-suhaibserver:latest
+    ports:
+      - "443:443"
+    configs:
+      - source: suhaibserver_config
+        target: /etc/suhaibserver/config.yaml
+    volumes:
+      - certs-volume:/etc/certs:ro
+    deploy:
+      replicas: 1
+
+configs:
+  suhaibserver_config:
+    file: ./config.yaml
+
+volumes:
+  certs-volume:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /etc/nginx/ssl/
