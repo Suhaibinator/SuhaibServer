@@ -64,3 +64,9 @@ func (p *Proxy) HandleConnection(conn net.Conn) {
 		pconn.Close()
 	}
 }
+
+func (p *Proxy) GetBackend(host string) *Backend {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.backends[host]
+}

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 
@@ -83,6 +84,46 @@ func main() {
 	// 7) Build the Proxy object (assuming NewProxy is in backend or elsewhere).
 	myProxy := backend.NewProxy(sniffer, backends, nil)
 
+	go func() {
+
+		// A simple HTTP handler that redirects all incoming requests to the same
+		// host/URI but on https://
+		redirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			backend := myProxy.GetBackend(r.Host)
+			if backend == nil {
+				http.Error(w, "No such host", http.StatusNotFound)
+				return
+			}
+			if backend.TerminateTLS {
+				target := "https://" + r.Host + r.URL.RequestURI()
+				http.Redirect(w, r, target, http.StatusMovedPermanently)
+				return
+			}
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+				return
+			}
+			conn, _, err := hj.Hijack()
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+			myProxy.HandleConnection(conn)
+		})
+
+		// Create an HTTP server listening on :80
+		redirectSrv := &http.Server{
+			Addr:    ":80",
+			Handler: redirectHandler,
+		}
+
+		zap.S().Info("Starting HTTP->HTTPS redirect server on port 80")
+		if err := redirectSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			zap.S().Fatalf("Could not start HTTP->HTTPS redirect server: %v", err)
+		}
+	}()
+
 	// 8) Determine listening port.
 	port := cfg.Port
 	if port == "" {
@@ -96,75 +137,6 @@ func main() {
 	zap.S().Infof("Listening on port %s (log level: %s)", port, lvl.String())
 
 	// 9) Accept connections
-	for {
-		conn, err := ln.Accept()
-		if err != nil {
-			zap.S().Errorf("Accept error: %v", err)
-			continue
-		}
-		go myProxy.HandleConnection(conn)
-	}
-}
-
-// initLogger creates and returns a single Zap logger instance.
-// You can replace NewProduction() with NewDevelopment() or a custom config.
-func initLogger() *zap.Logger {
-	logger, err := zap.NewProduction()
-	if err != nil {
-		panic(err)
-	}
-	return logger
-}
-
-// parseCLIArgs checks we have at least one argument (the config file) and returns its path.
-func parseCLIArgs() string {
-	if len(os.Args) < 2 {
-		zap.S().Fatalf("Usage: %s <config-file>", os.Args[0])
-	}
-	return os.Args[1]
-}
-
-// loadConfig loads your YAML/JSON config file into the typed config struct.
-func loadConfig(filePath string) *config.Config {
-	cfg, err := config.LoadConfig(filePath)
-	if err != nil {
-		zap.S().Fatalf("Error loading config file %q: %v", filePath, err)
-	}
-	return cfg
-}
-
-// createSniffer constructs the SNI sniffer based on your loaded config.
-func createSniffer(cfg *config.Config) proxy_router.SniSniffer {
-	return proxy_router.SniSniffer{
-		MaxReadSize: cfg.SniSniffer.MaxReadSize,
-		Timeout:     cfg.SniSniffer.Timeout.Duration,
-	}
-}
-
-// buildBackends iterates over your config’s BackendConfig slices and builds them.
-func buildBackends(cfg *config.Config) map[string]*backend.Backend {
-	backends := make(map[string]*backend.Backend)
-	for _, bcfg := range cfg.Backends {
-		be, err := backend.NewBackendFromConfig(bcfg)
-		if err != nil {
-			zap.S().Fatalf("Failed to create backend for HostName=%s: %v", bcfg.Hostname, err)
-		}
-		backends[bcfg.Hostname] = be
-	}
-	return backends
-}
-
-// startListening opens a TCP listener on the given port.
-func startListening(port string) net.Listener {
-	ln, err := net.Listen("tcp", ":"+port)
-	if err != nil {
-		zap.S().Fatalf("Error listening: %v", err)
-	}
-	return ln
-}
-
-// acceptLoop continuously accepts connections and hands them to the proxy.
-func acceptLoop(ln net.Listener, myProxy *backend.Proxy) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
