@@ -295,7 +295,7 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 			// Pass real client IP to origin
 			remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 			r.Header.Set("X-Original-Remote-IP", remoteIP)
-
+			r.Header.Set("X-Forwarded-Proto", "https")
 			// Let ReverseProxy handle the request
 			b.ReverseProxy.ServeHTTP(w, r)
 		}),
