@@ -87,7 +87,10 @@ func main() {
 	myProxy := backend.NewProxy(sniffer, backends, nil)
 
 	go func() {
-
+		httpPort := cfg.HttpPort
+		if httpPort == "" {
+			httpPort = "80"
+		}
 		// A simple HTTP handler that redirects all incoming requests to the same
 		// host/URI but on https://
 		redirectHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -116,7 +119,7 @@ func main() {
 
 		// Create an HTTP server listening on :80
 		redirectSrv := &http.Server{
-			Addr:    ":80",
+			Addr:    ":" + httpPort,
 			Handler: redirectHandler,
 		}
 
@@ -126,17 +129,17 @@ func main() {
 		}
 	}()
 
-	// 8) Determine listening port.
-	port := cfg.Port
-	if port == "" {
-		port = "443"
+	// 8) Determine listening httpsPort.
+	httpsPort := cfg.HttpsPort
+	if httpsPort == "" {
+		httpsPort = "443"
 	}
 
-	ln, err := net.Listen("tcp", ":"+port)
+	ln, err := net.Listen("tcp", ":"+httpsPort)
 	if err != nil {
-		zap.S().Fatalf("Error listening on port %s: %v", port, err)
+		zap.S().Fatalf("Error listening on port %s: %v", httpsPort, err)
 	}
-	zap.S().Infof("Listening on port %s (log level: %s)", port, lvl.String())
+	zap.S().Infof("Listening on port %s (log level: %s)", httpsPort, lvl.String())
 
 	// 9) Accept connections
 	for {

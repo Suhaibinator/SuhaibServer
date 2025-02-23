@@ -301,7 +301,8 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 				)
 
 				if requiresMTLS {
-					if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+
+					if len(tlsConn.ConnectionState().PeerCertificates) == 0 {
 						zap.L().Warn("No client cert provided; returning 401",
 							zap.String("remoteAddr", r.RemoteAddr),
 							zap.String("url", r.URL.String()),

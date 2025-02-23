@@ -54,7 +54,8 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 type Config struct {
 	SniSniffer SniSnifferConfig `yaml:"SniSniffer" json:"SniSniffer"`
 	Backends   []BackendConfig  `yaml:"Backends"   json:"Backends"`
-	Port       string           `yaml:"Port"       json:"Port"`
+	HttpsPort  string           `yaml:"HttpsPort"       json:"HttpsPort"`
+	HttpPort   string           `yaml:"HttpPort"       json:"HttpPort"`
 	CertsPath  string           `yaml:"CertsPath"  json:"CertsPath"`
 	LogLevel   string           `yaml:"LogLevel"   json:"LogLevel"`
 }
@@ -125,8 +126,8 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
-	if cfg.Port == "" {
-		cfg.Port = "443"
+	if cfg.HttpsPort == "" {
+		cfg.HttpsPort = "443"
 	}
 	// At this point, cfg is loaded from either YAML or JSON.
 	// Let's fix up file paths by prepending /etc/certs if they're not absolute.
