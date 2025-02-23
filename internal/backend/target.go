@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -15,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/Suhaibinator/SuhaibServer/internal/config"
+	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 )
 
@@ -34,10 +34,10 @@ type Backend struct {
 }
 
 func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
-	log.Printf("[DEBUG] Entering NewBackendFromConfig(bcfg=%+v)", bcfg)
+	zap.L().Debug("Entering NewBackendFromConfig", zap.Any("backendConfig", bcfg))
 
 	// Build the UseMTLS function according to MTLSEnabled and MTLSPolicy.
-	log.Printf("[DEBUG] Calling buildMTLSLogic...")
+	zap.L().Debug("Calling buildMTLSLogic...")
 	useMTLS := buildMTLSLogic(bcfg)
 
 	// Create the base Backend struct.
@@ -51,56 +51,67 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 		OriginPort:   bcfg.OriginPort,
 	}
 
-	log.Printf("[DEBUG] Created Backend struct: TerminateTLS=%v, TLSCertFile=%q, TLSKeyFile=%q, RootCAFile=%q, OriginServer=%q, OriginPort=%q",
-		b.TerminateTLS, b.TLSCertFile, b.TLSKeyFile, b.RootCAFile, b.OriginServer, b.OriginPort)
+	zap.L().Debug("Created Backend struct",
+		zap.Bool("TerminateTLS", b.TerminateTLS),
+		zap.String("TLSCertFile", b.TLSCertFile),
+		zap.String("TLSKeyFile", b.TLSKeyFile),
+		zap.String("RootCAFile", b.RootCAFile),
+		zap.String("OriginServer", b.OriginServer),
+		zap.String("OriginPort", b.OriginPort),
+	)
 
 	// If we’re terminating TLS, build the inbound TLS config.
 	if b.TerminateTLS {
-		log.Printf("[DEBUG] TerminateTLS is true; building inbound TLS config (mTLS enabled=%v)...", bcfg.MTLSEnabled)
+		zap.L().Debug("TerminateTLS is true; building inbound TLS config",
+			zap.Bool("mTLS", bcfg.MTLSEnabled),
+		)
 		tlsCfg, err := b.buildInboundTLSConfig(bcfg.MTLSEnabled)
 		if err != nil {
-			log.Printf("[ERROR] buildInboundTLSConfig failed: %v", err)
+			zap.L().Error("buildInboundTLSConfig failed", zap.Error(err))
 			return nil, fmt.Errorf("buildInboundTLSConfig error: %w", err)
 		}
 		b.InboundTLSConfig = tlsCfg
-		log.Printf("[DEBUG] Inbound TLS config successfully built.")
+		zap.L().Debug("Inbound TLS config successfully built.")
 	} else {
-		log.Printf("[DEBUG] TerminateTLS is false; no TLS config will be built.")
+		zap.L().Debug("TerminateTLS is false; no TLS config will be built.")
 	}
 
 	// Build the reverse proxy to the origin server.
-	log.Printf("[DEBUG] Building reverse proxy to origin %s:%s...", b.OriginServer, b.OriginPort)
+	zap.L().Debug("Building reverse proxy to origin",
+		zap.String("OriginServer", b.OriginServer),
+		zap.String("OriginPort", b.OriginPort),
+	)
 	rp, err := b.buildReverseProxy()
 	if err != nil {
-		log.Printf("[ERROR] buildReverseProxy failed: %v", err)
+		zap.L().Error("buildReverseProxy failed", zap.Error(err))
 		return nil, fmt.Errorf("buildReverseProxy error: %w", err)
 	}
 	b.ReverseProxy = rp
-	log.Printf("[DEBUG] Reverse proxy successfully built.")
+	zap.L().Debug("Reverse proxy successfully built.")
 
-	log.Printf("[DEBUG] Exiting NewBackendFromConfig, returning Backend: %+v", b)
+	zap.L().Debug("Exiting NewBackendFromConfig, returning Backend", zap.Any("backend", b))
 	return b, nil
 }
 
 // buildMTLSLogic returns a function that decides whether a given path/query requires mTLS.
-// This encapsulates the “default plus exceptions” logic.
+// This encapsulates the "default plus exceptions" logic.
 func buildMTLSLogic(bcfg config.BackendConfig) func(u *url.URL) bool {
-	log.Printf("[DEBUG] Entering buildMTLSLogic(bcfg=%+v)", bcfg)
+	zap.L().Debug("Entering buildMTLSLogic", zap.Any("backendConfig", bcfg))
 
 	// If mTLS isn’t enabled globally, always return false.
 	if !bcfg.MTLSEnabled {
-		log.Printf("[DEBUG] mTLS not enabled globally, returning function that always returns false.")
+		zap.L().Debug("mTLS not enabled globally; returning false always.")
 		return func(u *url.URL) bool {
-			log.Printf("[TRACE] buildMTLSLogic: returning false for URL=%v", u)
+			zap.L().Debug("mTLSLogic => false", zap.String("url", u.String()))
 			return false
 		}
 	}
 
-	// If we *are* enabled but have no policy, decide how you want to handle it:
+	// If we *are* enabled but have no policy, always return true.
 	if bcfg.MTLSPolicy == nil {
-		log.Printf("[DEBUG] mTLS is enabled but policy is nil; returning function that always returns true.")
+		zap.L().Debug("mTLS is enabled but policy is nil; returning true always.")
 		return func(u *url.URL) bool {
-			log.Printf("[TRACE] buildMTLSLogic: returning true for URL=%v", u)
+			zap.L().Debug("mTLSLogic => true", zap.String("url", u.String()))
 			return true
 		}
 	}
@@ -110,28 +121,38 @@ func buildMTLSLogic(bcfg config.BackendConfig) func(u *url.URL) bool {
 	pathSet := sliceToSet(bcfg.MTLSPolicy.Paths)
 	querySet := sliceToSet(bcfg.MTLSPolicy.Queries)
 
-	log.Printf("[DEBUG] mTLS enabled with policy; default=%v, pathSet=%v, querySet=%v",
-		defaultMTLS, pathSet, querySet)
+	zap.L().Debug("mTLS enabled with policy",
+		zap.Bool("defaultMTLS", defaultMTLS),
+		zap.Any("pathSet", pathSet),
+		zap.Any("querySet", querySet),
+	)
 
 	return func(u *url.URL) bool {
-		log.Printf("[TRACE] Checking mTLS requirement for URL: %v", u)
+		zap.L().Debug("Checking mTLS requirement for URL", zap.String("url", u.String()))
 
 		matchesException := false
 
-		// Check path prefixes first
+		// Check path prefixes
 		for prefix := range pathSet {
 			if strings.HasPrefix(u.Path, prefix) {
-				log.Printf("[TRACE] URL path %q has prefix %q => exception match", u.Path, prefix)
+				zap.L().Debug("URL path has prefix => exception match",
+					zap.String("path", u.Path),
+					zap.String("prefix", prefix),
+				)
 				matchesException = true
 				break
 			}
 		}
-		// If no path matched, check the query params
+
+		// If no path matched, check query params
 		if !matchesException {
 			q := u.Query()
 			for param := range querySet {
 				if q.Has(param) {
-					log.Printf("[TRACE] URL query %v has param %q => exception match", q, param)
+					zap.L().Debug("URL query has param => exception match",
+						zap.Any("query", q),
+						zap.String("param", param),
+					)
 					matchesException = true
 					break
 				}
@@ -143,40 +164,47 @@ func buildMTLSLogic(bcfg config.BackendConfig) func(u *url.URL) bool {
 			result = !defaultMTLS
 		}
 
-		log.Printf("[TRACE] buildMTLSLogic: URL=%v => requireMTLS=%v (defaultMTLS=%v, matchesException=%v)",
-			u, result, defaultMTLS, matchesException)
+		zap.L().Debug("mTLS decision",
+			zap.String("url", u.String()),
+			zap.Bool("requireMTLS", result),
+			zap.Bool("defaultMTLS", defaultMTLS),
+			zap.Bool("matchesException", matchesException),
+		)
 
 		return result
 	}
 }
 
 func sliceToSet(items []string) map[string]struct{} {
-	log.Printf("[DEBUG] Entering sliceToSet(items=%v)", items)
+	zap.L().Debug("Entering sliceToSet", zap.Strings("items", items))
 	set := make(map[string]struct{}, len(items))
 	for _, v := range items {
 		set[v] = struct{}{}
 	}
-	log.Printf("[DEBUG] Exiting sliceToSet, returning set: %v", set)
+	zap.L().Debug("Exiting sliceToSet", zap.Any("set", set))
 	return set
 }
 
 // Handle processes an incoming connection using this backend’s config.
-//
 // If TerminateTLS==true, we locally terminate TLS and reverse-proxy HTTP.
 // If TerminateTLS==false, we do a raw TCP tunnel to the origin server/port.
 func (b *Backend) Handle(conn net.Conn, sni string) error {
-	log.Printf("[DEBUG] Entering (*Backend).Handle(conn=%v, sni=%q). TerminateTLS=%v", conn.RemoteAddr(), sni, b.TerminateTLS)
+	zap.L().Debug("Entering Backend.Handle",
+		zap.String("remoteAddr", conn.RemoteAddr().String()),
+		zap.String("sni", sni),
+		zap.Bool("terminateTLS", b.TerminateTLS),
+	)
 
 	if b.TerminateTLS {
-		log.Printf("[DEBUG] TerminateTLS is true; will terminate TLS locally and proxy via HTTP.")
+		zap.L().Debug("TerminateTLS => will terminate TLS locally and proxy via HTTP")
 		err := b.terminateTLSAndProxyHTTP(conn)
-		log.Printf("[DEBUG] Exiting (*Backend).Handle with error: %v", err)
+		zap.L().Debug("Exiting Backend.Handle", zap.Error(err))
 		return err
 	} else {
-		log.Printf("[DEBUG] TerminateTLS is false; tunnel TCP directly to origin.")
+		zap.L().Debug("TerminateTLS=false => tunnel raw TCP directly to origin")
 		dest := net.JoinHostPort(b.OriginServer, b.OriginPort)
 		err := tunnelTCP(conn, dest)
-		log.Printf("[DEBUG] Exiting (*Backend).Handle with error: %v", err)
+		zap.L().Debug("Exiting Backend.Handle", zap.Error(err))
 		return err
 	}
 }
@@ -184,35 +212,38 @@ func (b *Backend) Handle(conn net.Conn, sni string) error {
 // ----------------------------------------------------------------------------
 // TUNNEL MODE (no TLS termination)
 // ----------------------------------------------------------------------------
+
 func tunnelTCP(client net.Conn, backendAddr string) error {
-	log.Printf("[DEBUG] Entering tunnelTCP(client=%v, backendAddr=%q)", client.RemoteAddr(), backendAddr)
+	zap.L().Debug("Entering tunnelTCP",
+		zap.String("clientAddr", client.RemoteAddr().String()),
+		zap.String("backendAddr", backendAddr),
+	)
 	defer func() {
-		log.Printf("[DEBUG] Closing client connection from %v in tunnelTCP", client.RemoteAddr())
+		zap.L().Debug("Closing client connection in tunnelTCP", zap.String("clientAddr", client.RemoteAddr().String()))
 		client.Close()
 	}()
+
 	server, err := net.Dial("tcp", backendAddr)
 	if err != nil {
-		log.Printf("[ERROR] tunnelTCP: failed to dial backend at %q: %v", backendAddr, err)
+		zap.L().Error("tunnelTCP: failed to dial backend", zap.String("backendAddr", backendAddr), zap.Error(err))
 		return err
 	}
 	defer func() {
-		log.Printf("[DEBUG] Closing server connection to %v in tunnelTCP", server.RemoteAddr())
+		zap.L().Debug("Closing server connection in tunnelTCP", zap.String("serverAddr", server.RemoteAddr().String()))
 		server.Close()
 	}()
 
-	log.Printf("[DEBUG] tunnelTCP: copying data between client and server.")
+	zap.L().Debug("tunnelTCP: copying data between client and server.")
 	go func() {
-		_, copyErr := io.Copy(server, client)
-		if copyErr != nil {
-			log.Printf("[ERROR] tunnelTCP: error copying from client to server: %v", copyErr)
+		if _, copyErr := io.Copy(server, client); copyErr != nil {
+			zap.L().Error("tunnelTCP: error copying from client to server", zap.Error(copyErr))
 		}
 	}()
-	_, copyErr := io.Copy(client, server)
-	if copyErr != nil {
-		log.Printf("[ERROR] tunnelTCP: error copying from server to client: %v", copyErr)
+	if _, copyErr := io.Copy(client, server); copyErr != nil {
+		zap.L().Error("tunnelTCP: error copying from server to client", zap.Error(copyErr))
 	}
 
-	log.Printf("[DEBUG] Exiting tunnelTCP")
+	zap.L().Debug("Exiting tunnelTCP")
 	return nil
 }
 
@@ -223,7 +254,9 @@ func tunnelTCP(client net.Conn, backendAddr string) error {
 // terminateTLSAndProxyHTTP terminates TLS and uses a standard HTTP server to handle
 // multiple requests (HTTP/1.1 keep-alive or HTTP/2) over the same single connection.
 func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
-	log.Printf("[DEBUG] Entering terminateTLSAndProxyHTTP(conn=%v)", conn.RemoteAddr())
+	zap.L().Debug("Entering terminateTLSAndProxyHTTP",
+		zap.String("remoteAddr", conn.RemoteAddr().String()),
+	)
 
 	if b.InboundTLSConfig == nil {
 		return fmt.Errorf("inboundTLSConfig is nil; cannot terminate TLS")
@@ -234,7 +267,10 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 
 	// Perform the TLS handshake now (so if there's an error, we see it early)
 	if err := tlsConn.Handshake(); err != nil {
-		log.Printf("[ERROR] TLS handshake failed from %v: %v", conn.RemoteAddr(), err)
+		zap.L().Error("TLS handshake failed",
+			zap.String("remoteAddr", conn.RemoteAddr().String()),
+			zap.Error(err),
+		)
 		tlsConn.Close()
 		return err
 	}
@@ -248,7 +284,10 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 			// If mTLS required for this URL, check client certificate
 			if b.UseMTLS != nil && b.UseMTLS(r.URL) {
 				if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-					log.Printf("[WARN] No client cert provided; returning 401.")
+					zap.L().Warn("No client cert provided; returning 401",
+						zap.String("remoteAddr", r.RemoteAddr),
+						zap.String("url", r.URL.String()),
+					)
 					http.Error(w, "client certificate required", http.StatusUnauthorized)
 					return
 				}
@@ -270,98 +309,122 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 		},
 	}
 
-	// Serve will not exit until we return from Accept() with a permanent error or
-	// the connection is closed by the client or forcibly by us.
+	// Serve will not exit until we return from Accept() with a permanent error
+	// or the connection is closed by the client or forcibly by us.
 	err := server.Serve(oneShotLn)
 	if err != nil && err != http.ErrServerClosed {
-		log.Printf("[ERROR] http server error: %v", err)
+		zap.L().Error("http server error", zap.Error(err))
 		return fmt.Errorf("http server error: %w", err)
 	}
 
-	log.Printf("[DEBUG] Exiting terminateTLSAndProxyHTTP (conn=%v) with no fatal error", conn.RemoteAddr())
+	zap.L().Debug("Exiting terminateTLSAndProxyHTTP with no fatal error",
+		zap.String("remoteAddr", conn.RemoteAddr().String()),
+	)
 	return nil
 }
 
 // buildInboundTLSConfig loads cert/key and optionally RootCA for verifying client certs.
 func (b *Backend) buildInboundTLSConfig(mtlsEnabled bool) (*tls.Config, error) {
-	log.Printf("[DEBUG] Entering (*Backend).buildInboundTLSConfig(mtlsEnabled=%v). Files: cert=%q, key=%q, rootCA=%q",
-		mtlsEnabled, b.TLSCertFile, b.TLSKeyFile, b.RootCAFile)
+	zap.L().Debug("Entering buildInboundTLSConfig",
+		zap.Bool("mtlsEnabled", mtlsEnabled),
+		zap.String("certFile", b.TLSCertFile),
+		zap.String("keyFile", b.TLSKeyFile),
+		zap.String("rootCA", b.RootCAFile),
+	)
 
 	cert, err := tls.LoadX509KeyPair(b.TLSCertFile, b.TLSKeyFile)
 	if err != nil {
-		log.Printf("[ERROR] failed to load key pair (cert=%q, key=%q): %v", b.TLSCertFile, b.TLSKeyFile, err)
+		zap.L().Error("Failed to load key pair",
+			zap.String("certFile", b.TLSCertFile),
+			zap.String("keyFile", b.TLSKeyFile),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("failed to load key pair: %w", err)
 	}
-	log.Printf("[DEBUG] Loaded X509 key pair successfully.")
+	zap.L().Debug("Loaded X509 key pair successfully.")
 
 	tlsCfg := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 	}
-	log.Printf("[DEBUG] Created base tls.Config with loaded certificate.")
+	zap.L().Debug("Created base tls.Config with loaded certificate.")
 
 	// If mTLS is enabled and we have a RootCAFile, load it and configure ClientAuth.
 	if mtlsEnabled && b.RootCAFile != "" {
-		log.Printf("[DEBUG] mTLS enabled and RootCAFile provided; loading CA from %q", b.RootCAFile)
+		zap.L().Debug("mTLS enabled and RootCAFile provided, loading CA",
+			zap.String("rootCAFile", b.RootCAFile),
+		)
 		pool, err := loadCertPool(b.RootCAFile)
 		if err != nil {
-			log.Printf("[ERROR] Could not load root CA file %q: %v", b.RootCAFile, err)
+			zap.L().Error("Could not load root CA file",
+				zap.String("rootCAFile", b.RootCAFile),
+				zap.Error(err),
+			)
 			return nil, fmt.Errorf("could not load root CA file: %w", err)
 		}
 
 		tlsCfg.ClientCAs = pool
 		tlsCfg.ClientAuth = tls.VerifyClientCertIfGiven
-		log.Printf("[DEBUG] Set tlsCfg.ClientCAs and tlsCfg.ClientAuth=VerifyClientCertIfGiven for partial mTLS.")
+		zap.L().Debug("Set tlsCfg.ClientCAs and tlsCfg.ClientAuth=VerifyClientCertIfGiven for partial mTLS.")
 	} else {
-		log.Printf("[DEBUG] mTLS disabled or no RootCAFile specified; not setting ClientCAs.")
+		zap.L().Debug("mTLS disabled or no RootCAFile specified; not setting ClientCAs.")
 	}
 
-	log.Printf("[DEBUG] Exiting (*Backend).buildInboundTLSConfig with success.")
+	zap.L().Debug("Exiting buildInboundTLSConfig with success.")
 	return tlsCfg, nil
 }
 
 // buildReverseProxy constructs an httputil.ReverseProxy for the origin server.
 func (b *Backend) buildReverseProxy() (*httputil.ReverseProxy, error) {
-	log.Printf("[DEBUG] Entering (*Backend).buildReverseProxy(). OriginServer=%q, OriginPort=%q", b.OriginServer, b.OriginPort)
+	zap.L().Debug("Entering buildReverseProxy",
+		zap.String("OriginServer", b.OriginServer),
+		zap.String("OriginPort", b.OriginPort),
+	)
 
 	rawURL := fmt.Sprintf("http://%s:%s", b.OriginServer, b.OriginPort)
-	log.Printf("[DEBUG] Constructed raw origin URL=%q", rawURL)
+	zap.L().Debug("Constructed raw origin URL", zap.String("rawURL", rawURL))
 
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		log.Printf("[ERROR] Failed to parse origin URL %q: %v", rawURL, err)
+		zap.L().Error("Failed to parse origin URL",
+			zap.String("rawURL", rawURL),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("failed to parse origin URL %q: %w", rawURL, err)
 	}
 
-	log.Printf("[DEBUG] Creating httputil.NewSingleHostReverseProxy for parsed URL=%q", parsed.String())
+	zap.L().Debug("Creating httputil.NewSingleHostReverseProxy", zap.String("parsedURL", parsed.String()))
 	proxy := httputil.NewSingleHostReverseProxy(parsed)
-	log.Printf("[DEBUG] Exiting (*Backend).buildReverseProxy with success.")
+	zap.L().Debug("Exiting buildReverseProxy with success.")
 	return proxy, nil
 }
 
 // Helper to load a CA cert file into an *x509.CertPool.
 func loadCertPool(caFile string) (*x509.CertPool, error) {
-	log.Printf("[DEBUG] Entering loadCertPool(caFile=%q)", caFile)
+	zap.L().Debug("Entering loadCertPool", zap.String("caFile", caFile))
 
 	caBytes, err := os.ReadFile(caFile)
 	if err != nil {
-		log.Printf("[ERROR] Could not read CA file %q: %v", caFile, err)
+		zap.L().Error("Could not read CA file",
+			zap.String("caFile", caFile),
+			zap.Error(err),
+		)
 		return nil, err
 	}
 
 	pool := x509.NewCertPool()
 	if !pool.AppendCertsFromPEM(caBytes) {
-		err := fmt.Errorf("failed to append certs from %s", caFile)
-		log.Printf("[ERROR] %v", err)
-		return nil, err
+		e := fmt.Errorf("failed to append certs from %s", caFile)
+		zap.L().Error(e.Error())
+		return nil, e
 	}
 
-	log.Printf("[DEBUG] Exiting loadCertPool with success (CA file=%q).", caFile)
+	zap.L().Debug("Exiting loadCertPool with success", zap.String("caFile", caFile))
 	return pool, nil
 }
 
-// ----------------------------------------------------------------------------
+// -------------------------------------------------------------------------
 // SINGLE-CONN LISTENER (FIXED)
-// ----------------------------------------------------------------------------
+// -------------------------------------------------------------------------
 
 // singleConnListener is a net.Listener that returns exactly one net.Conn (the TLS-wrapped
 // conn), but does NOT immediately error out on subsequent Accept() calls. Instead, it

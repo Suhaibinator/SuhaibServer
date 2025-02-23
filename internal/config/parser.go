@@ -54,6 +54,9 @@ func (d *Duration) UnmarshalJSON(data []byte) error {
 type Config struct {
 	SniSniffer SniSnifferConfig `yaml:"SniSniffer" json:"SniSniffer"`
 	Backends   []BackendConfig  `yaml:"Backends"   json:"Backends"`
+	Port       string           `yaml:"Port"       json:"Port"`
+	CertsPath  string           `yaml:"CertsPath"  json:"CertsPath"`
+	LogLevel   string           `yaml:"LogLevel"   json:"LogLevel"`
 }
 
 // SniSnifferConfig now uses Duration instead of string for Timeout.
@@ -122,11 +125,16 @@ func LoadConfig(path string) (*Config, error) {
 		}
 	}
 
+	if cfg.Port == "" {
+		cfg.Port = "443"
+	}
 	// At this point, cfg is loaded from either YAML or JSON.
 	// Let's fix up file paths by prepending /etc/certs if they're not absolute.
-	certsPath := os.Getenv("CERTS_PATH")
-	if certsPath == "" {
+	var certsPath string
+	if cfg.CertsPath == "" {
 		certsPath = "/etc/certs"
+	} else {
+		certsPath = cfg.CertsPath
 	}
 	cfg.resolveCertPaths(certsPath)
 
