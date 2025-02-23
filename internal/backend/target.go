@@ -278,20 +278,40 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 	// We’ll serve exactly this one TLS connection with an http.Server
 	oneShotLn := newSingleConnListener(tlsConn)
 
-	// Build an http.Server
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Debug logging for mTLS checking
+			zap.L().Debug("mTLS check details",
+				zap.Bool("hasMTLSFunc", b.UseMTLS != nil),
+				zap.String("url", r.URL.String()),
+			)
+
 			// If mTLS required for this URL, check client certificate
-			if b.UseMTLS != nil && b.UseMTLS(r.URL) {
-				if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
-					zap.L().Warn("No client cert provided; returning 401",
-						zap.String("remoteAddr", r.RemoteAddr),
-						zap.String("url", r.URL.String()),
-					)
-					http.Error(w, "client certificate required", http.StatusUnauthorized)
-					return
+			if b.UseMTLS != nil {
+				requiresMTLS := b.UseMTLS(r.URL)
+				zap.L().Debug("mTLS requirement check",
+					zap.Bool("requiresMTLS", requiresMTLS),
+					zap.Bool("hasTLSInfo", r.TLS != nil),
+					zap.Int("numPeerCerts", func() int {
+						if r.TLS != nil {
+							return len(r.TLS.PeerCertificates)
+						}
+						return 0
+					}()),
+				)
+
+				if requiresMTLS {
+					if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+						zap.L().Warn("No client cert provided; returning 401",
+							zap.String("remoteAddr", r.RemoteAddr),
+							zap.String("url", r.URL.String()),
+						)
+						http.Error(w, "client certificate required", http.StatusUnauthorized)
+						return
+					}
 				}
 			}
+
 			// Pass real client IP to origin
 			remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
 			r.Header.Set("X-Original-Remote-IP", remoteIP)
