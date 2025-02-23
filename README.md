@@ -89,6 +89,98 @@ docker run -d \
   /etc/suhaib/config.yaml
 ```
 
+#### c) Docker Compose Example
+You can also use docker compose to manage your SuhaibServer instance, and provide the configuration file as a Docker Config inline:
+```yaml
+version: '3.8'
+
+services:
+  suhaibserver:
+    image: ghcr.io/suhaibinator/suhaibserver:latest
+    ports:
+      - "443:443"
+    configs:
+      - source: suhaibserver_config
+        target: /etc/suhaibserver/config.yaml
+    volumes:
+      - /etc/nginx/ssl/:/etc/certs/:ro
+    restart: always
+
+configs:
+  suhaibserver_config:
+    content: |
+      # Example SuhaibServer Configuration
+
+      # SniSniffer controls how we read the first few bytes of an incoming connection
+      # to detect the SNI (Server Name Indication).
+      SniSniffer:
+        # MaxReadSize is the maximum number of bytes to peek from the client
+        # to extract the SNI. If the SNI can't be found within this range,
+        # the connection is closed or handled as an error.
+        MaxReadSize: 4096
+
+        # Timeout is how long (e.g. 5s, 500ms, etc.) we wait for TLS handshake data
+        # when sniffing for SNI. If this timeout is exceeded, we fail the connection.
+        Timeout: 5s
+
+      # Backends is a list of per-hostname configurations, each describing
+      # how to handle connections to a particular SNI.
+      Backends:
+        - hostname: example.com
+
+          # If mTLS is enabled, we consult MTLSPolicy to see which paths or
+          # queries require (or exclude) client certificates.
+          MTLSEnabled: true
+
+          # The MTLSPolicy below means: by default, do NOT require mTLS (Default=false),
+          # but invert that default if the path starts with `/admin` or if the query param
+          # "token" is present—those routes *will* require mTLS.
+          MTLSPolicy:
+            Default: false
+            Paths:
+              - /admin
+            Queries:
+              - token
+
+          # TerminateTLS=true means SuhaibServer will handle TLS termination locally
+          # (i.e., present cert/key) and then forward plain HTTP (or HTTPS) to the Origin.
+          TerminateTLS: true
+          TLSCertFile: example.com.crt
+          TLSKeyFile: example.com.key
+
+          # RootCAFile is used to verify client certificates if mTLS is triggered.
+          # If you leave it blank, partial mTLS still works (the handshake won't *force*
+          # a client cert). This is just an example path.
+          RootCAFile: ca.crt
+
+          # OriginServer / OriginPort describe where to forward traffic after TLS termination.
+          # For example, maybe your app is running on localhost:8080 inside the container.
+          OriginServer: 127.0.0.1
+          OriginPort: "8080"
+
+        - hostname: foo.bar
+          # In this example, we do NOT enable mTLS or TLS termination for foo.bar,
+          # which means we do a raw TCP pass-through to the origin.
+          MTLSEnabled: false
+          TerminateTLS: false
+
+          # Because we are not terminating TLS, these fields are optional or unused:
+          # TLSCertFile, TLSKeyFile, RootCAFile
+          # They can be omitted or left blank in YAML if you wish.
+
+          # The origin is presumably a TLS-enabled service on 192.168.0.10:443.
+          OriginServer: 192.168.0.10
+          OriginPort: "443"
+
+
+volumes:
+  certs-volume:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /etc/nginx/ssl/
+```
 ---
 
 ## Example Configuration
