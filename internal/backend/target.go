@@ -441,43 +441,80 @@ type singleConnListener struct {
 	doneChan chan struct{}
 }
 
+type closeNotifyConn struct {
+	net.Conn
+	once    sync.Once
+	onClose func()
+}
+
+func (c *closeNotifyConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.onClose) // call onClose exactly once
+	return err
+}
+
 // newSingleConnListener creates a singleConnListener for one net.Conn.
 func newSingleConnListener(c net.Conn) *singleConnListener {
-	return &singleConnListener{
-		conn:     c,
+	s := &singleConnListener{
 		doneChan: make(chan struct{}),
 	}
+
+	// Wrap the net.Conn so that when *this* connection is closed,
+	// the listener learns about it.
+	s.conn = &closeNotifyConn{
+		Conn: c,
+		onClose: func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+
+			if !s.closed {
+				// Mark the listener closed so that subsequent Accept() returns net.ErrClosed.
+				s.closed = true
+				close(s.doneChan) // unblock anything waiting in Accept()
+			}
+		},
+	}
+
+	return s
 }
 
 func (s *singleConnListener) Accept() (net.Conn, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
+	// If the listener is already closed, bail out immediately.
 	if s.closed {
+		s.mu.Unlock()
 		return nil, net.ErrClosed
 	}
+
+	// If we haven't given out the connection yet, do so now.
 	if !s.used {
-		// First Accept call returns the net.Conn
 		s.used = true
-		return s.conn, nil
+		conn := s.conn
+		s.mu.Unlock()
+		return conn, nil
 	}
 
-	// Any subsequent Accept call blocks until conn is closed, then returns net.ErrClosed
+	// Any subsequent Accept call must block until the connection is closed,
+	// then return net.ErrClosed.
 	s.mu.Unlock()
-	<-s.doneChan
-	s.mu.Lock()
+
+	<-s.doneChan // block until either the connection or the listener is closed
 	return nil, net.ErrClosed
 }
 
 func (s *singleConnListener) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
 	if s.closed {
 		return nil
 	}
 	s.closed = true
+
 	if s.conn != nil {
-		s.conn.Close()
+		// This will eventually trigger onClose() as well, but we guard with s.closed so it’s safe.
+		_ = s.conn.Close()
 	}
 	close(s.doneChan)
 	return nil
