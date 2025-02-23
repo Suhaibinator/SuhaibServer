@@ -70,38 +70,38 @@ type MTLSPolicy struct {
 	// the request matches an exception below.
 	// If false, no request requires mTLS by default—unless
 	// it matches an exception below.
-	Default bool `yaml:"default" json:"default"`
+	Default bool `yaml:"Default" json:"Default"`
 
 	// These are path prefixes for which we will *invert* the default.
 	// e.g. if Default=true => these paths will *not* require mTLS
 	// if Default=false => these paths *will* require mTLS.
-	Paths []string `yaml:"paths" json:"paths"`
+	Paths []string `yaml:"Paths" json:"Paths"`
 
 	// Same logic as Paths, but for query parameters: if any of these
 	// query params are present, invert the default behavior.
-	Queries []string `yaml:"queries" json:"queries"`
+	Queries []string `yaml:"Queries" json:"Queries"`
 }
 
 // Duration, SniSnifferConfig, MTLSPolicy types unchanged...
 // (omitting for brevity)
 
 type BackendConfig struct {
-	Hostname string `yaml:"hostname" json:"hostname"`
+	Hostname string `yaml:"Hostname" json:"Hostname"`
 
 	// If false, no mTLS is used at all (TLS only).
 	// If true, we consult MTLSPolicy to decide if a given
 	// path/query enforces mTLS or not.
-	MTLSEnabled  bool        `yaml:"mtlsEnabled" json:"mtlsEnabled"`
-	MTLSPolicy   *MTLSPolicy `yaml:"mtlsPolicy"  json:"mtlsPolicy"`
-	TerminateTLS bool        `yaml:"terminateTLS" json:"terminateTLS"`
+	MTLSEnabled  bool        `yaml:"MtlsEnabled" json:"MtlsEnabled"`
+	MTLSPolicy   *MTLSPolicy `yaml:"MtlsPolicy"  json:"MtlsPolicy"`
+	TerminateTLS bool        `yaml:"TerminateTLS" json:"TerminateTLS"`
 
 	// Note that we now allow just a filename, which we’ll resolve after parsing.
-	TLSCertFile string `yaml:"tlsCertFile"  json:"tlsCertFile"`
-	TLSKeyFile  string `yaml:"tlsKeyFile"   json:"tlsKeyFile"`
-	RootCAFile  string `yaml:"rootCAFile"   json:"rootCAFile"`
+	TLSCertFile string `yaml:"TlsCertFile"  json:"TlsCertFile"`
+	TLSKeyFile  string `yaml:"TlsKeyFile"   json:"TlsKeyFile"`
+	RootCAFile  string `yaml:"RootCAFile"   json:"RootCAFile"`
 
-	OriginServer string `yaml:"originServer" json:"originServer"`
-	OriginPort   string `yaml:"originPort"   json:"originPort"`
+	OriginServer string `yaml:"OriginServer" json:"OriginServer"`
+	OriginPort   string `yaml:"OriginPort"   json:"OriginPort"`
 }
 
 func LoadConfig(path string) (*Config, error) {
