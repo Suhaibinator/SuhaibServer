@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -29,6 +30,7 @@ func parseLogLevel(levelStr string) zapcore.Level {
 		fmt.Printf("Unknown log level %q; defaulting to INFO\n", levelStr)
 		return zapcore.InfoLevel
 	}
+	log.Printf("Log level set to %s\n", lvl)
 	return lvl
 }
 
