@@ -153,6 +153,9 @@ configs:
           # a client cert). This is just an example path.
           RootCAFile: ca.crt
 
+          # OriginScheme indicates whether to connect to the origin via HTTP or HTTPS.
+          OriginScheme: http
+
           # OriginServer / OriginPort describe where to forward traffic after TLS termination.
           # For example, maybe your app is running on localhost:8080 inside the container.
           OriginServer: 127.0.0.1
@@ -169,6 +172,7 @@ configs:
           # They can be omitted or left blank in YAML if you wish.
 
           # The origin is presumably a TLS-enabled service on 192.168.0.10:443.
+          OriginScheme: https
           OriginServer: 192.168.0.10
           OriginPort: "443"
 
@@ -213,12 +217,14 @@ Backends:
     TLSCertFile: example.com.crt
     TLSKeyFile:  example.com.key
     RootCAFile:  ca.crt
+    OriginScheme: http
     OriginServer: 127.0.0.1
     OriginPort: "8080"
 
   - hostname: foo.bar
     MTLSEnabled: false   # no mTLS for foo.bar
     TerminateTLS: false  # pass-through raw TCP
+    OriginScheme: https
     OriginServer: 192.168.0.10
     OriginPort: "443"
 ```
@@ -241,8 +247,8 @@ suhaibserver <config-file>
   - `Hostname` - matches the SNI requested by the client.
   - `TerminateTLS` (true/false).
   - `MTLSEnabled` (true/false) and optional `MTLSPolicy` for partial or conditional mTLS.  
-  - `TLSCertFile`, `TLSKeyFile`, `RootCAFile` (paths to certificates/keys).  
-  - `OriginServer` and `OriginPort` (where traffic is forwarded).
+  - `TLSCertFile`, `TLSKeyFile`, `RootCAFile` (paths to certificates/keys).
+  - `OriginScheme` (`http` or `https`), plus `OriginServer` and `OriginPort` (where traffic is forwarded).
 
 ---
 

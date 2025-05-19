@@ -26,6 +26,9 @@ type Backend struct {
 	TLSKeyFile  string
 	RootCAFile  string
 
+	// Scheme to use when connecting to the origin (http or https).
+	OriginScheme string
+
 	OriginServer string
 	OriginPort   string
 
@@ -41,12 +44,17 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 	useMTLS := buildMTLSLogic(bcfg)
 
 	// Create the base Backend struct.
+	scheme := bcfg.OriginScheme
+	if scheme == "" {
+		scheme = "http"
+	}
 	b := &Backend{
 		TerminateTLS: bcfg.TerminateTLS,
 		UseMTLS:      useMTLS,
 		TLSCertFile:  bcfg.TLSCertFile,
 		TLSKeyFile:   bcfg.TLSKeyFile,
 		RootCAFile:   bcfg.RootCAFile,
+		OriginScheme: scheme,
 		OriginServer: bcfg.OriginServer,
 		OriginPort:   bcfg.OriginPort,
 	}
@@ -56,6 +64,7 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 		zap.String("TLSCertFile", b.TLSCertFile),
 		zap.String("TLSKeyFile", b.TLSKeyFile),
 		zap.String("RootCAFile", b.RootCAFile),
+		zap.String("OriginScheme", b.OriginScheme),
 		zap.String("OriginServer", b.OriginServer),
 		zap.String("OriginPort", b.OriginPort),
 	)
@@ -78,6 +87,7 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 
 	// Build the reverse proxy to the origin server.
 	zap.L().Debug("Building reverse proxy to origin",
+		zap.String("OriginScheme", b.OriginScheme),
 		zap.String("OriginServer", b.OriginServer),
 		zap.String("OriginPort", b.OriginPort),
 	)
@@ -397,11 +407,12 @@ func (b *Backend) buildInboundTLSConfig(mtlsEnabled bool) (*tls.Config, error) {
 // buildReverseProxy constructs an httputil.ReverseProxy for the origin server.
 func (b *Backend) buildReverseProxy() (*httputil.ReverseProxy, error) {
 	zap.L().Debug("Entering buildReverseProxy",
+		zap.String("OriginScheme", b.OriginScheme),
 		zap.String("OriginServer", b.OriginServer),
 		zap.String("OriginPort", b.OriginPort),
 	)
 
-	rawURL := fmt.Sprintf("http://%s:%s", b.OriginServer, b.OriginPort)
+	rawURL := fmt.Sprintf("%s://%s:%s", b.OriginScheme, b.OriginServer, b.OriginPort)
 	zap.L().Debug("Constructed raw origin URL", zap.String("rawURL", rawURL))
 
 	parsed, err := url.Parse(rawURL)
