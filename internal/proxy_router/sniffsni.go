@@ -66,6 +66,10 @@ func (s *SniSniffer) SniffSNI(conn net.Conn) (sni string, allData []byte, err er
 			_ = conn.SetReadDeadline(time.Now().Add(s.Timeout))
 		}
 
+		if len(allData)+recordLen > s.MaxReadSize {
+			return "", allData, fmt.Errorf("too much data without completing ClientHello, possible attack")
+		}
+
 		payload := make([]byte, recordLen)
 		if _, err := io.ReadFull(conn, payload); err != nil {
 			return "", allData, fmt.Errorf("failed reading record payload: %v", err)
