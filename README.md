@@ -1,6 +1,8 @@
 # SuhaibServer
 
 [![Build, Test, Publish](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/ci.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/ci.yaml)
+[![Lint](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/lint.yaml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/lint.yaml)
+[![CodeQL](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/codeql.yml/badge.svg)](https://github.com/Suhaibinator/SuhaibServer/actions/workflows/codeql.yml)
 
 **SuhaibServer** is a reverse proxy designed to simplify and enhance TLS and mTLS (Mutual TLS) management beyond what is typically possible in solutions like NGINX or Apache. By leveraging **SNI (Server Name Indication)**, SuhaibServer allows you to define highly granular routing and security policies per domain—right down to specific URLs and query parameters.
 
@@ -276,3 +278,4 @@ MTLSPolicy:
 ## License
 
 SuhaibServer is licensed under the [MIT License](LICENSE).  
+
