@@ -101,6 +101,9 @@ type BackendConfig struct {
 	TLSKeyFile  string `yaml:"TlsKeyFile"   json:"TlsKeyFile"`
 	RootCAFile  string `yaml:"RootCAFile"   json:"RootCAFile"`
 
+	// OriginScheme specifies the protocol (http or https) used to reach the origin.
+	OriginScheme string `yaml:"OriginScheme" json:"OriginScheme"`
+
 	OriginServer string `yaml:"OriginServer" json:"OriginServer"`
 	OriginPort   string `yaml:"OriginPort"   json:"OriginPort"`
 }

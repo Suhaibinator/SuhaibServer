@@ -191,23 +191,47 @@ func TestBuildReverseProxy(t *testing.T) {
 	_, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	b := &Backend{
-		OriginServer: "example.com",
-		OriginPort:   "1234",
-	}
-	rp, err := b.buildReverseProxy()
-	if err != nil {
-		t.Fatalf("BuildReverseProxy error: %v", err)
-	}
-	// The Director should rewrite requests to "http://example.com:1234"
-	req, _ := http.NewRequest("GET", "http://originalhost/", nil)
-	rp.Director(req)
-	if req.URL.Scheme != "http" {
-		t.Errorf("expected scheme=http, got %s", req.URL.Scheme)
-	}
-	if req.URL.Host != "example.com:1234" {
-		t.Errorf("expected host=example.com:1234, got %s", req.URL.Host)
-	}
+	t.Run("http scheme", func(t *testing.T) {
+		b := &Backend{
+			OriginScheme: "http",
+			OriginServer: "example.com",
+			OriginPort:   "1234",
+		}
+		rp, err := b.buildReverseProxy()
+		if err != nil {
+			t.Fatalf("BuildReverseProxy error: %v", err)
+		}
+
+		req, _ := http.NewRequest("GET", "http://originalhost/", nil)
+		rp.Director(req)
+		if req.URL.Scheme != "http" {
+			t.Errorf("expected scheme=http, got %s", req.URL.Scheme)
+		}
+		if req.URL.Host != "example.com:1234" {
+			t.Errorf("expected host=example.com:1234, got %s", req.URL.Host)
+		}
+	})
+
+	t.Run("https scheme", func(t *testing.T) {
+		b := &Backend{
+			OriginScheme: "https",
+			OriginServer: "secure.example.com",
+			OriginPort:   "8443",
+		}
+		rp, err := b.buildReverseProxy()
+		if err != nil {
+			t.Fatalf("BuildReverseProxy error: %v", err)
+		}
+
+		req, _ := http.NewRequest("GET", "http://originalhost/", nil)
+		rp.Director(req)
+		if req.URL.Scheme != "https" {
+			t.Errorf("expected scheme=https, got %s", req.URL.Scheme)
+		}
+		if req.URL.Host != "secure.example.com:8443" {
+			t.Errorf("expected host=secure.example.com:8443, got %s", req.URL.Host)
+		}
+	})
 }
 
 // TestSingleConnListener checks that the listener returns exactly one connection
@@ -301,6 +325,7 @@ func TestBackendHandle_PassThrough(t *testing.T) {
 	// Create a backend that does NOT terminate TLS
 	b := &Backend{
 		TerminateTLS: false,
+		OriginScheme: "http",
 		OriginServer: "127.0.0.1",
 		OriginPort:   "9090", // We'll run a tiny server on 9090
 	}

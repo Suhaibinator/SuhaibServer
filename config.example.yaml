@@ -42,6 +42,9 @@ Backends:
     # a client cert). This is just an example path.
     RootCAFile: ca.crt
 
+    # OriginScheme indicates whether to connect to the origin via HTTP or HTTPS.
+    OriginScheme: http
+
     # OriginServer / OriginPort describe where to forward traffic after TLS termination.
     # For example, maybe your app is running on localhost:8080 inside the container.
     OriginServer: 127.0.0.1
@@ -58,5 +61,6 @@ Backends:
     # They can be omitted or left blank in YAML if you wish.
 
     # The origin is presumably a TLS-enabled service on 192.168.0.10:443.
+    OriginScheme: https
     OriginServer: 192.168.0.10
     OriginPort: "443"
