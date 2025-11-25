@@ -44,7 +44,7 @@ func TestNewBackend(t *testing.T) {
 			OriginPort:   "8080",
 		}
 
-		b, err := NewBackendFromConfig(bcfg)
+                b, err := NewBackendFromConfig(bcfg, config.BackendHookPlan{})
 		if err != nil {
 			t.Fatalf("unexpected error creating backend: %v", err)
 		}
@@ -75,7 +75,7 @@ func TestNewBackend(t *testing.T) {
 			OriginPort:   "8080",
 		}
 
-		_, err := NewBackendFromConfig(bcfg)
+                _, err := NewBackendFromConfig(bcfg, config.BackendHookPlan{})
 		if err == nil {
 			t.Fatal("expected error due to invalid cert/key file paths, got nil")
 		}

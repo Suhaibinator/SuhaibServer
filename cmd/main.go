@@ -71,10 +71,16 @@ func main() {
 		Timeout:     cfg.SniSniffer.Timeout.Duration,
 	}
 
+	hookPlans, err := cfg.ResolveBackendHooks()
+	if err != nil {
+		panic(err)
+	}
+
 	// 6) Build backends map.
 	backends := make(map[string]*backend.Backend)
 	for _, bcfg := range cfg.Backends {
-		be, err := backend.NewBackendFromConfig(bcfg)
+		plan := hookPlans[bcfg.Hostname]
+		be, err := backend.NewBackendFromConfig(bcfg, plan)
 		if err != nil {
 			zap.S().Fatalf("Failed to create backend for HostName=%s: %v", bcfg.Hostname, err)
 		}

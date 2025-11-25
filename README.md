@@ -59,6 +59,60 @@
    ./suhaibserver /path/to/config.yaml
    ```
 
+### Registering Hooks
+
+SuhaibServer exposes an SDK in [`sdk/hooks`](sdk/hooks) so you can register request and completion hooks in your own code. Hooks are matched by host, path prefix, and HTTP method from YAML, and are executed in priority order.
+
+```go
+import "github.com/Suhaibinator/SuhaibServer/sdk/hooks"
+
+func init() {
+    hooks.Register(hooks.Registration{
+        Name: "audit",
+        Kind: hooks.OnRequestReceived,
+        Handler: hooks.RequestHook(func(ctx context.Context, rc hooks.RequestCtx) error {
+            log.Printf("trace=%s host=%s path=%s", rc.TraceID, rc.Host, rc.Path)
+            return nil
+        }),
+    })
+
+    hooks.Register(hooks.Registration{
+        Name: "metrics",
+        Kind: hooks.OnRequestCompleted,
+        Handler: hooks.CompletionHook(func(ctx context.Context, rc hooks.ResponseCtx) error {
+            fmt.Printf("status=%d latency=%s err=%v\n", rc.Status, rc.Latency, rc.Err)
+            return nil
+        }),
+        Priority: 10,
+    })
+}
+```
+
+Map those names into `config.yaml`:
+
+```yaml
+Hooks:
+  - name: audit
+    kind: on_request_received
+    match:
+      host: example.com
+      path_prefix: /api
+      methods: [GET, POST]
+    timeout: 500ms
+  - name: metrics
+    kind: on_request_completed
+    match:
+      host: example.com
+
+Backends:
+  - Hostname: example.com
+    # ...TLS/origin config...
+    Hooks:
+      on_request_received: [audit]
+      on_request_completed: [metrics]
+```
+If the client presents a certificate, request hooks receive it in `RequestCtx.ClientCert` (including a SHA-256 fingerprint) so you can identify the caller.
+
 ### 2. Docker Usage
 
 We publish a Docker image that can be used directly, or you can build it yourself.

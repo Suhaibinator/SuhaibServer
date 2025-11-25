@@ -12,6 +12,20 @@ SniSniffer:
   # when sniffing for SNI. If this timeout is exceeded, we fail the connection.
   Timeout: 5s
 
+# Hooks are registered in your Go code (see README) and referenced by name here.
+Hooks:
+  - name: auth
+    kind: on_request_received
+    match:
+      host: example.com
+      path_prefix: /admin
+      methods: [GET, POST]
+    timeout: 800ms
+  - name: metrics
+    kind: on_request_completed
+    match:
+      host: example.com
+
 # Backends is a list of per-hostname configurations, each describing
 # how to handle connections to a particular SNI.
 Backends:
@@ -49,6 +63,11 @@ Backends:
     # For example, maybe your app is running on localhost:8080 inside the container.
     OriginServer: 127.0.0.1
     OriginPort: "8080"
+
+    # Configure which hooks should run for this backend.
+    Hooks:
+      on_request_received: [auth]
+      on_request_completed: [metrics]
 
   - hostname: foo.bar
     # In this example, we do NOT enable mTLS or TLS termination for foo.bar,
