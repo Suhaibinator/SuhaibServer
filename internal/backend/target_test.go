@@ -576,22 +576,19 @@ func TestRunCompletionHooks_MatcherFiltering(t *testing.T) {
 // TestExecuteHook_Timeout verifies that hook timeout is respected.
 func TestExecuteHook_Timeout(t *testing.T) {
 	ctx := context.Background()
+	timeout := 50 * time.Millisecond
 
 	rh := hooks.ResolvedHook{
 		Registration: hooks.Registration{
 			Name: "slowHook",
 			Kind: hooks.OnRequestReceived,
 			Handler: hooks.RequestHook(func(ctx context.Context, _ hooks.RequestCtx) error {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case <-time.After(5 * time.Second):
-					return nil
-				}
+				<-ctx.Done()
+				return ctx.Err()
 			}),
 		},
 		Matcher: hooks.Matcher{},
-		Timeout: 50 * time.Millisecond,
+		Timeout: timeout,
 	}
 
 	b := &Backend{}
@@ -607,8 +604,9 @@ func TestExecuteHook_Timeout(t *testing.T) {
 	if !strings.Contains(err.Error(), "timed out") {
 		t.Errorf("expected timeout error message, got %v", err)
 	}
-	if elapsed > 1*time.Second {
-		t.Errorf("expected hook to timeout quickly, took %v", elapsed)
+	// Allow generous margin for CI environments
+	if elapsed > timeout*10 {
+		t.Errorf("expected hook to timeout within %v, took %v", timeout*10, elapsed)
 	}
 }
 
