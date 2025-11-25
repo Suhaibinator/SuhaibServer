@@ -1,8 +1,12 @@
 package backend
 
 import (
+	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,8 +16,10 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Suhaibinator/SuhaibServer/internal/config"
+	"github.com/Suhaibinator/SuhaibServer/sdk/hooks"
 	"go.uber.org/zap"
 	"golang.org/x/net/http2"
 )
@@ -34,9 +40,11 @@ type Backend struct {
 
 	InboundTLSConfig *tls.Config
 	ReverseProxy     *httputil.ReverseProxy
+
+	hookPlan config.BackendHookPlan
 }
 
-func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
+func NewBackendFromConfig(bcfg config.BackendConfig, plan config.BackendHookPlan) (*Backend, error) {
 	zap.L().Debug("Entering NewBackendFromConfig", zap.Any("backendConfig", bcfg))
 
 	// Build the UseMTLS function according to MTLSEnabled and MTLSPolicy.
@@ -57,6 +65,7 @@ func NewBackendFromConfig(bcfg config.BackendConfig) (*Backend, error) {
 		OriginScheme: scheme,
 		OriginServer: bcfg.OriginServer,
 		OriginPort:   bcfg.OriginPort,
+		hookPlan:     plan,
 	}
 
 	zap.L().Debug("Created Backend struct",
@@ -290,13 +299,11 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 
 	server := &http.Server{
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Debug logging for mTLS checking
 			zap.L().Debug("mTLS check details",
 				zap.Bool("hasMTLSFunc", b.UseMTLS != nil),
 				zap.String("url", r.URL.String()),
 			)
 
-			// If mTLS required for this URL, check client certificate
 			if b.UseMTLS != nil {
 				requiresMTLS := b.UseMTLS(r.URL)
 				zap.L().Debug("mTLS requirement check",
@@ -323,11 +330,24 @@ func (b *Backend) terminateTLSAndProxyHTTP(conn net.Conn) error {
 				}
 			}
 
-			// Pass real client IP to origin
 			remoteIP, _, _ := net.SplitHostPort(r.RemoteAddr)
+			reqCtx := b.buildRequestContext(r, remoteIP, tlsConn.ConnectionState().PeerCertificates)
+
+			ctx := context.WithValue(r.Context(), hookContextKey{}, hookContext{
+				reqCtx: reqCtx,
+				start:  time.Now(),
+			})
+			r = r.WithContext(ctx)
+
+			if err := b.runRequestHooks(r.Context(), reqCtx); err != nil {
+				zap.L().Warn("request hook blocked request", zap.Error(err))
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
+
 			r.Header.Set("X-Original-Remote-IP", remoteIP)
 			r.Header.Set("X-Forwarded-Proto", "https")
-			// Let ReverseProxy handle the request
+
 			b.ReverseProxy.ServeHTTP(w, r)
 		}),
 	}
@@ -426,8 +446,129 @@ func (b *Backend) buildReverseProxy() (*httputil.ReverseProxy, error) {
 
 	zap.L().Debug("Creating httputil.NewSingleHostReverseProxy", zap.String("parsedURL", parsed.String()))
 	proxy := httputil.NewSingleHostReverseProxy(parsed)
+	proxy.ModifyResponse = b.handleProxyResponse
+	proxy.ErrorHandler = b.handleProxyError
 	zap.L().Debug("Exiting buildReverseProxy with success.")
 	return proxy, nil
+}
+
+type hookContextKey struct{}
+
+type hookContext struct {
+	reqCtx hooks.RequestCtx
+	start  time.Time
+}
+
+func (b *Backend) buildRequestContext(r *http.Request, remoteIP string, peerCerts []*x509.Certificate) hooks.RequestCtx {
+	var clientCert *hooks.ClientCert
+	if len(peerCerts) > 0 {
+		fp := sha256.Sum256(peerCerts[0].Raw)
+		clientCert = &hooks.ClientCert{
+			Leaf:        peerCerts[0],
+			Chain:       peerCerts,
+			Fingerprint: hex.EncodeToString(fp[:]),
+		}
+	}
+
+	traceID := r.Header.Get("X-Request-Id")
+	if traceID == "" {
+		traceID = fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+
+	return hooks.RequestCtx{
+		Req:        r,
+		Host:       r.Host,
+		Path:       r.URL.Path,
+		TraceID:    traceID,
+		ClientIP:   remoteIP,
+		Meta:       map[string]string{},
+		ClientCert: clientCert,
+	}
+}
+
+func (b *Backend) runRequestHooks(ctx context.Context, reqCtx hooks.RequestCtx) error {
+	for _, rh := range b.hookPlan.Request {
+		if !rh.Matcher.Matches(reqCtx) {
+			continue
+		}
+		if err := b.executeHook(ctx, rh, reqCtx, hooks.ResponseCtx{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Backend) runCompletionHooks(ctx context.Context, respCtx hooks.ResponseCtx) {
+	for _, rh := range b.hookPlan.Completion {
+		if !rh.Matcher.Matches(respCtx.ReqCtx) {
+			continue
+		}
+		if err := b.executeHook(ctx, rh, respCtx.ReqCtx, respCtx); err != nil {
+			zap.L().Warn("completion hook failed", zap.String("hook", rh.Registration.Name), zap.Error(err))
+		}
+	}
+}
+
+func (b *Backend) executeHook(ctx context.Context, rh hooks.ResolvedHook, reqCtx hooks.RequestCtx, respCtx hooks.ResponseCtx) (err error) {
+	hookCtx := ctx
+	cancel := func() {}
+	if rh.Timeout > 0 {
+		hookCtx, cancel = context.WithTimeout(ctx, rh.Timeout)
+	}
+	defer cancel()
+
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("hook %s panicked: %v", rh.Registration.Name, r)
+		}
+	}()
+
+	switch rh.Registration.Kind {
+	case hooks.OnRequestReceived:
+		err = rh.Registration.Handler.(hooks.RequestHook)(hookCtx, reqCtx)
+	case hooks.OnRequestCompleted:
+		err = rh.Registration.Handler.(hooks.CompletionHook)(hookCtx, respCtx)
+	default:
+		err = fmt.Errorf("unknown hook kind %s", rh.Registration.Kind)
+	}
+
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("hook %s timed out", rh.Registration.Name)
+	}
+	if err != nil {
+		return fmt.Errorf("hook %s: %w", rh.Registration.Name, err)
+	}
+	return nil
+}
+
+func (b *Backend) handleProxyResponse(resp *http.Response) error {
+	hc, ok := resp.Request.Context().Value(hookContextKey{}).(hookContext)
+	if !ok {
+		return nil
+	}
+	respCtx := hooks.ResponseCtx{
+		ReqCtx:  hc.reqCtx,
+		Status:  resp.StatusCode,
+		Headers: resp.Header.Clone(),
+		Latency: time.Since(hc.start),
+	}
+	b.runCompletionHooks(resp.Request.Context(), respCtx)
+	return nil
+}
+
+func (b *Backend) handleProxyError(w http.ResponseWriter, r *http.Request, err error) {
+	http.Error(w, err.Error(), http.StatusBadGateway)
+	hc, ok := r.Context().Value(hookContextKey{}).(hookContext)
+	if !ok {
+		return
+	}
+	respCtx := hooks.ResponseCtx{
+		ReqCtx:  hc.reqCtx,
+		Status:  http.StatusBadGateway,
+		Err:     err,
+		Latency: time.Since(hc.start),
+	}
+	b.runCompletionHooks(r.Context(), respCtx)
 }
 
 // Helper to load a CA cert file into an *x509.CertPool.

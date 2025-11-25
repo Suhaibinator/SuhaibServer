@@ -58,6 +58,7 @@ type Config struct {
 	HttpPort   string           `yaml:"HttpPort"       json:"HttpPort"`
 	CertsPath  string           `yaml:"CertsPath"  json:"CertsPath"`
 	LogLevel   string           `yaml:"LogLevel"   json:"LogLevel"`
+	Hooks      []HookConfig     `yaml:"Hooks" json:"Hooks"`
 }
 
 // SniSnifferConfig now uses Duration instead of string for Timeout.
@@ -106,6 +107,8 @@ type BackendConfig struct {
 
 	OriginServer string `yaml:"OriginServer" json:"OriginServer"`
 	OriginPort   string `yaml:"OriginPort"   json:"OriginPort"`
+
+	Hooks BackendHooks `yaml:"Hooks" json:"Hooks"`
 }
 
 func LoadConfig(path string) (*Config, error) {

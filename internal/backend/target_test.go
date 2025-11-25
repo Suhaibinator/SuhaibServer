@@ -17,10 +17,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Suhaibinator/SuhaibServer/internal/config"
+	"github.com/Suhaibinator/SuhaibServer/sdk/hooks"
 )
 
 // TestNewBackend covers creation of a Backend using NewBackend.
@@ -44,7 +46,7 @@ func TestNewBackend(t *testing.T) {
 			OriginPort:   "8080",
 		}
 
-		b, err := NewBackendFromConfig(bcfg)
+		b, err := NewBackendFromConfig(bcfg, config.BackendHookPlan{})
 		if err != nil {
 			t.Fatalf("unexpected error creating backend: %v", err)
 		}
@@ -75,7 +77,7 @@ func TestNewBackend(t *testing.T) {
 			OriginPort:   "8080",
 		}
 
-		_, err := NewBackendFromConfig(bcfg)
+		_, err := NewBackendFromConfig(bcfg, config.BackendHookPlan{})
 		if err == nil {
 			t.Fatal("expected error due to invalid cert/key file paths, got nil")
 		}
@@ -370,6 +372,395 @@ func TestBackendHandle_PassThrough(t *testing.T) {
 	}
 	if string(echoBuf) != string(testMsg) {
 		t.Errorf("expected echo %q, got %q", string(testMsg), string(echoBuf))
+	}
+}
+
+// ========================================================================
+// HOOK EXECUTION TESTS
+// ========================================================================
+
+// TestRunRequestHooks_Success verifies that request hooks are executed in order.
+func TestRunRequestHooks_Success(t *testing.T) {
+	ctx := context.Background()
+	var called []string
+
+	plan := config.BackendHookPlan{
+		Request: []hooks.ResolvedHook{
+			{
+				Registration: hooks.Registration{
+					Name:    "hook1",
+					Kind:    hooks.OnRequestReceived,
+					Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error { called = append(called, "hook1"); return nil }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+			{
+				Registration: hooks.Registration{
+					Name:    "hook2",
+					Kind:    hooks.OnRequestReceived,
+					Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error { called = append(called, "hook2"); return nil }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+		},
+	}
+
+	b := &Backend{hookPlan: plan}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	err := b.runRequestHooks(ctx, reqCtx)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(called) != 2 {
+		t.Fatalf("expected 2 hooks called, got %d", len(called))
+	}
+	if called[0] != "hook1" || called[1] != "hook2" {
+		t.Errorf("expected hooks called in order [hook1, hook2], got %v", called)
+	}
+}
+
+// TestRunRequestHooks_MatcherFiltering verifies that hooks are skipped when matcher doesn't match.
+func TestRunRequestHooks_MatcherFiltering(t *testing.T) {
+	ctx := context.Background()
+	var called []string
+
+	plan := config.BackendHookPlan{
+		Request: []hooks.ResolvedHook{
+			{
+				Registration: hooks.Registration{
+					Name:    "matchingHook",
+					Kind:    hooks.OnRequestReceived,
+					Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error { called = append(called, "matchingHook"); return nil }),
+				},
+				Matcher: hooks.Matcher{Host: "example.com"},
+			},
+			{
+				Registration: hooks.Registration{
+					Name:    "nonMatchingHook",
+					Kind:    hooks.OnRequestReceived,
+					Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error { called = append(called, "nonMatchingHook"); return nil }),
+				},
+				Matcher: hooks.Matcher{Host: "other.com"},
+			},
+		},
+	}
+
+	b := &Backend{hookPlan: plan}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	err := b.runRequestHooks(ctx, reqCtx)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if len(called) != 1 {
+		t.Fatalf("expected 1 hook called, got %d", len(called))
+	}
+	if called[0] != "matchingHook" {
+		t.Errorf("expected matchingHook to be called, got %v", called)
+	}
+}
+
+// TestRunRequestHooks_Error verifies that hook errors are propagated.
+func TestRunRequestHooks_Error(t *testing.T) {
+	ctx := context.Background()
+	expectedErr := errors.New("hook failed")
+
+	plan := config.BackendHookPlan{
+		Request: []hooks.ResolvedHook{
+			{
+				Registration: hooks.Registration{
+					Name:    "failingHook",
+					Kind:    hooks.OnRequestReceived,
+					Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error { return expectedErr }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+		},
+	}
+
+	b := &Backend{hookPlan: plan}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	err := b.runRequestHooks(ctx, reqCtx)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !strings.Contains(err.Error(), "failingHook") {
+		t.Errorf("expected error to contain hook name, got %v", err)
+	}
+}
+
+// TestRunCompletionHooks_Success verifies that completion hooks are executed.
+func TestRunCompletionHooks_Success(t *testing.T) {
+	ctx := context.Background()
+	var called []string
+
+	plan := config.BackendHookPlan{
+		Completion: []hooks.ResolvedHook{
+			{
+				Registration: hooks.Registration{
+					Name:    "completionHook1",
+					Kind:    hooks.OnRequestCompleted,
+					Handler: hooks.CompletionHook(func(_ context.Context, _ hooks.ResponseCtx) error { called = append(called, "completionHook1"); return nil }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+			{
+				Registration: hooks.Registration{
+					Name:    "completionHook2",
+					Kind:    hooks.OnRequestCompleted,
+					Handler: hooks.CompletionHook(func(_ context.Context, _ hooks.ResponseCtx) error { called = append(called, "completionHook2"); return nil }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+		},
+	}
+
+	b := &Backend{hookPlan: plan}
+	respCtx := hooks.ResponseCtx{
+		ReqCtx: hooks.RequestCtx{Host: "example.com", Path: "/test"},
+		Status: 200,
+	}
+
+	b.runCompletionHooks(ctx, respCtx)
+	if len(called) != 2 {
+		t.Fatalf("expected 2 hooks called, got %d", len(called))
+	}
+	if called[0] != "completionHook1" || called[1] != "completionHook2" {
+		t.Errorf("expected hooks called in order [completionHook1, completionHook2], got %v", called)
+	}
+}
+
+// TestRunCompletionHooks_MatcherFiltering verifies completion hooks respect matchers.
+func TestRunCompletionHooks_MatcherFiltering(t *testing.T) {
+	ctx := context.Background()
+	var called []string
+
+	plan := config.BackendHookPlan{
+		Completion: []hooks.ResolvedHook{
+			{
+				Registration: hooks.Registration{
+					Name:    "matchingHook",
+					Kind:    hooks.OnRequestCompleted,
+					Handler: hooks.CompletionHook(func(_ context.Context, _ hooks.ResponseCtx) error { called = append(called, "matchingHook"); return nil }),
+				},
+				Matcher: hooks.Matcher{PathPrefix: "/api"},
+			},
+			{
+				Registration: hooks.Registration{
+					Name:    "nonMatchingHook",
+					Kind:    hooks.OnRequestCompleted,
+					Handler: hooks.CompletionHook(func(_ context.Context, _ hooks.ResponseCtx) error { called = append(called, "nonMatchingHook"); return nil }),
+				},
+				Matcher: hooks.Matcher{PathPrefix: "/admin"},
+			},
+		},
+	}
+
+	b := &Backend{hookPlan: plan}
+	respCtx := hooks.ResponseCtx{
+		ReqCtx: hooks.RequestCtx{Host: "example.com", Path: "/api/users"},
+		Status: 200,
+	}
+
+	b.runCompletionHooks(ctx, respCtx)
+	if len(called) != 1 {
+		t.Fatalf("expected 1 hook called, got %d", len(called))
+	}
+	if called[0] != "matchingHook" {
+		t.Errorf("expected matchingHook to be called, got %v", called)
+	}
+}
+
+// TestExecuteHook_Timeout verifies that hook timeout is respected.
+func TestExecuteHook_Timeout(t *testing.T) {
+	ctx := context.Background()
+	timeout := 50 * time.Millisecond
+
+	rh := hooks.ResolvedHook{
+		Registration: hooks.Registration{
+			Name: "slowHook",
+			Kind: hooks.OnRequestReceived,
+			Handler: hooks.RequestHook(func(ctx context.Context, _ hooks.RequestCtx) error {
+				<-ctx.Done()
+				return ctx.Err()
+			}),
+		},
+		Matcher: hooks.Matcher{},
+		Timeout: timeout,
+	}
+
+	b := &Backend{}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	start := time.Now()
+	err := b.executeHook(ctx, rh, reqCtx, hooks.ResponseCtx{})
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("expected timeout error, got nil")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout error message, got %v", err)
+	}
+	// Allow generous margin for CI environments
+	if elapsed > timeout*10 {
+		t.Errorf("expected hook to timeout within %v, took %v", timeout*10, elapsed)
+	}
+}
+
+// TestExecuteHook_PanicRecovery verifies that panics in hooks are recovered.
+func TestExecuteHook_PanicRecovery(t *testing.T) {
+	ctx := context.Background()
+
+	rh := hooks.ResolvedHook{
+		Registration: hooks.Registration{
+			Name: "panicHook",
+			Kind: hooks.OnRequestReceived,
+			Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error {
+				panic("intentional panic for testing")
+			}),
+		},
+		Matcher: hooks.Matcher{},
+	}
+
+	b := &Backend{}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	err := b.executeHook(ctx, rh, reqCtx, hooks.ResponseCtx{})
+	if err == nil {
+		t.Fatal("expected error from panic recovery, got nil")
+	}
+	if !strings.Contains(err.Error(), "panicked") {
+		t.Errorf("expected panic error message, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "panicHook") {
+		t.Errorf("expected error to contain hook name, got %v", err)
+	}
+}
+
+// TestExecuteHook_UnknownKind verifies error for unknown hook kind.
+func TestExecuteHook_UnknownKind(t *testing.T) {
+	ctx := context.Background()
+
+	rh := hooks.ResolvedHook{
+		Registration: hooks.Registration{
+			Name:    "unknownKindHook",
+			Kind:    hooks.Kind("unknown_kind"),
+			Handler: nil,
+		},
+		Matcher: hooks.Matcher{},
+	}
+
+	b := &Backend{}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	err := b.executeHook(ctx, rh, reqCtx, hooks.ResponseCtx{})
+	if err == nil {
+		t.Fatal("expected error for unknown hook kind, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown hook kind") {
+		t.Errorf("expected unknown hook kind error, got %v", err)
+	}
+}
+
+// TestExecuteHook_CompletionHook verifies completion hook execution.
+func TestExecuteHook_CompletionHook(t *testing.T) {
+	ctx := context.Background()
+	var capturedStatus int
+
+	rh := hooks.ResolvedHook{
+		Registration: hooks.Registration{
+			Name: "completionHook",
+			Kind: hooks.OnRequestCompleted,
+			Handler: hooks.CompletionHook(func(_ context.Context, rc hooks.ResponseCtx) error {
+				capturedStatus = rc.Status
+				return nil
+			}),
+		},
+		Matcher: hooks.Matcher{},
+	}
+
+	b := &Backend{}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+	respCtx := hooks.ResponseCtx{ReqCtx: reqCtx, Status: 201}
+
+	err := b.executeHook(ctx, rh, reqCtx, respCtx)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if capturedStatus != 201 {
+		t.Errorf("expected status 201, got %d", capturedStatus)
+	}
+}
+
+// TestExecuteHook_NoTimeout verifies hooks work without timeout.
+func TestExecuteHook_NoTimeout(t *testing.T) {
+	ctx := context.Background()
+	called := false
+
+	rh := hooks.ResolvedHook{
+		Registration: hooks.Registration{
+			Name: "noTimeoutHook",
+			Kind: hooks.OnRequestReceived,
+			Handler: hooks.RequestHook(func(_ context.Context, _ hooks.RequestCtx) error {
+				called = true
+				return nil
+			}),
+		},
+		Matcher: hooks.Matcher{},
+		Timeout: 0, // No timeout
+	}
+
+	b := &Backend{}
+	reqCtx := hooks.RequestCtx{Host: "example.com", Path: "/test"}
+
+	err := b.executeHook(ctx, rh, reqCtx, hooks.ResponseCtx{})
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if !called {
+		t.Error("expected hook to be called")
+	}
+}
+
+// TestRunCompletionHooks_ErrorLogged verifies that completion hook errors are handled gracefully.
+func TestRunCompletionHooks_ErrorLogged(t *testing.T) {
+	ctx := context.Background()
+	var calledAfterError bool
+
+	plan := config.BackendHookPlan{
+		Completion: []hooks.ResolvedHook{
+			{
+				Registration: hooks.Registration{
+					Name:    "failingHook",
+					Kind:    hooks.OnRequestCompleted,
+					Handler: hooks.CompletionHook(func(_ context.Context, _ hooks.ResponseCtx) error { return errors.New("hook error") }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+			{
+				Registration: hooks.Registration{
+					Name:    "afterErrorHook",
+					Kind:    hooks.OnRequestCompleted,
+					Handler: hooks.CompletionHook(func(_ context.Context, _ hooks.ResponseCtx) error { calledAfterError = true; return nil }),
+				},
+				Matcher: hooks.Matcher{},
+			},
+		},
+	}
+
+	b := &Backend{hookPlan: plan}
+	respCtx := hooks.ResponseCtx{
+		ReqCtx: hooks.RequestCtx{Host: "example.com", Path: "/test"},
+		Status: 200,
+	}
+
+	// Completion hooks should continue even if one fails
+	b.runCompletionHooks(ctx, respCtx)
+	if !calledAfterError {
+		t.Error("expected hook after error to be called")
 	}
 }
 
