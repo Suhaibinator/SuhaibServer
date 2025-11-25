@@ -113,6 +113,29 @@ Backends:
 ```
 If the client presents a certificate, request hooks receive it in `RequestCtx.ClientCert` (including a SHA-256 fingerprint) so you can identify the caller.
 
+### Minimal Go Entrypoint
+
+If you prefer to embed SuhaibServer in your own binary, a minimal `main.go` looks like this:
+
+```go
+package main
+
+import "github.com/Suhaibinator/SuhaibServer/cmd"
+
+func main() {
+    // Pass the path to your config file as the first argument (or keep the
+    // default ./config.yaml). All other behavior is driven by YAML.
+    cmd.Execute()
+}
+```
+
+Build and run it just like the bundled `cmd/main.go` example:
+
+```bash
+go build -o suhaibserver ./cmd/main.go
+./suhaibserver /path/to/config.yaml
+```
+
 ### 2. Docker Usage
 
 We publish a Docker image that can be used directly, or you can build it yourself.
