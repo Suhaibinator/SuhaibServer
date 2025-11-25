@@ -115,25 +115,32 @@ If the client presents a certificate, request hooks receive it in `RequestCtx.Cl
 
 ### Minimal Go Entrypoint
 
-If you prefer to embed SuhaibServer in your own binary, a minimal `main.go` looks like this:
+If you prefer to embed SuhaibServer in your own binary, the public `server` package
+exposes a blocking runner you can call from `main.go`:
 
 ```go
 package main
 
-import "github.com/Suhaibinator/SuhaibServer/cmd"
+import (
+    "context"
+    "log"
+
+    "github.com/Suhaibinator/SuhaibServer/server"
+)
 
 func main() {
-    // Pass the path to your config file as the first argument (or keep the
-    // default ./config.yaml). All other behavior is driven by YAML.
-    cmd.Execute()
+    // The call blocks until the process receives a shutdown signal or an error occurs.
+    if err := server.RunWithConfigFile(context.Background(), "./config.yaml"); err != nil {
+        log.Fatalf("server failed: %v", err)
+    }
 }
 ```
 
-Build and run it just like the bundled `cmd/main.go` example:
+Build and run it just like the bundled CLI:
 
 ```bash
 go build -o suhaibserver ./cmd/main.go
-./suhaibserver /path/to/config.yaml
+./suhaibserver ./config.yaml
 ```
 
 ### 2. Docker Usage
